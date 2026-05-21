@@ -1,21 +1,27 @@
-"""Main control panel: start/pause/stop + mode/preset + status."""
+"""轻录 — main panel.
+
+Design language: dark monochromatic with a single accent (red, used only for
+the record action). Compact 360x220 frameless window, custom title bar with
+pin/min/close, no decorative labels — combos and icons are self-explanatory.
+"""
 from __future__ import annotations
-from pathlib import Path
 import ctypes
+import ctypes.wintypes as wt
 import os
 import subprocess
 import threading
+from pathlib import Path
+
 from PySide6.QtCore import Qt, QRect, QTimer, Signal, QObject, Slot, QUrl
-from PySide6.QtGui import QGuiApplication, QIcon, QAction, QDesktopServices
+from PySide6.QtGui import QGuiApplication, QIcon, QAction, QDesktopServices, QColor
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSystemTrayIcon, QMenu, QFrame, QSizePolicy, QLabel, QPushButton,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSystemTrayIcon, QMenu,
+    QLabel, QPushButton, QSizePolicy,
 )
+from qframelesswindow import FramelessMainWindow, StandardTitleBar
 from qfluentwidgets import (
-    PushButton, PrimaryPushButton, TransparentToolButton, ToolButton,
-    ComboBox, BodyLabel, CaptionLabel, StrongBodyLabel, SimpleCardWidget,
-    FluentIcon as FIF, setTheme, Theme, setThemeColor, InfoBar, InfoBarPosition,
-    MessageBox,
+    ComboBox, TransparentToolButton, ToolButton, FluentIcon as FIF,
+    setTheme, Theme, setThemeColor, InfoBar, InfoBarPosition,
 )
 
 from ..core import config as cfg_mod
@@ -28,23 +34,102 @@ from .window_picker import list_windows, get_window_rect, WindowInfo
 from .settings_dialog import SettingsDialog
 
 
+# ---------- Color tokens (design system) ----------
+
+BG_BASE = "#0f0f10"          # window background
+BG_CARD = "#171719"          # cards / inputs
+BG_HOVER = "rgba(255,255,255,0.05)"
+BG_PRESS = "rgba(255,255,255,0.08)"
+HAIRLINE = "#26262a"
+TEXT_PRIMARY = "#e8e8eb"
+TEXT_SECONDARY = "#9a9aa0"
+TEXT_TERTIARY = "#5e5e64"
+ACCENT_RED = "#e0303a"
+ACCENT_RED_HOVER = "#ed444d"
+ACCENT_RED_PRESS = "#c92a33"
+ACCENT_BLUE = "#5b8cff"
+
+
 class _RecorderBridge(QObject):
     state_changed = Signal(object)
     error = Signal(str)
 
 
-class MainWindow(QMainWindow):
+class _TitleBar(StandardTitleBar):
+    """Compact title bar with an injected pin (always-on-top) button."""
+
+    pin_toggled = Signal(bool)
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setFixedHeight(32)
+        self.maxBtn.hide()
+
+        self.titleLabel.setStyleSheet(
+            f"color: {TEXT_PRIMARY}; font-size: 12px; font-weight: 500; padding-left: 4px;"
+        )
+
+        # Force light icons + appropriate hover backgrounds for dark theme.
+        # qframelesswindow's theme detection defaults to dark icons in some setups.
+        light = QColor("#c8c8cc")
+        bright = QColor("#ffffff")
+        hover_bg = QColor(255, 255, 255, 18)
+        press_bg = QColor(255, 255, 255, 32)
+        close_hover = QColor(232, 17, 35, 230)
+        close_press = QColor(232, 17, 35, 255)
+        for b in (self.minBtn, self.maxBtn):
+            b.setNormalColor(light)
+            b.setHoverColor(bright)
+            b.setPressedColor(bright)
+            b.setNormalBackgroundColor(QColor(0, 0, 0, 0))
+            b.setHoverBackgroundColor(hover_bg)
+            b.setPressedBackgroundColor(press_bg)
+        self.closeBtn.setNormalColor(light)
+        self.closeBtn.setHoverColor(bright)
+        self.closeBtn.setPressedColor(bright)
+        self.closeBtn.setNormalBackgroundColor(QColor(0, 0, 0, 0))
+        self.closeBtn.setHoverBackgroundColor(close_hover)
+        self.closeBtn.setPressedBackgroundColor(close_press)
+
+        self.pin_btn = QPushButton("📌", self)
+        self.pin_btn.setObjectName("titlePin")
+        self.pin_btn.setCheckable(True)
+        self.pin_btn.setFixedSize(40, 32)
+        self.pin_btn.setToolTip("置顶")
+        self.pin_btn.toggled.connect(self.pin_toggled)
+
+        idx = self.hBoxLayout.indexOf(self.minBtn)
+        self.hBoxLayout.insertWidget(idx, self.pin_btn, 0, Qt.AlignRight | Qt.AlignTop)
+
+
+class MainWindow(FramelessMainWindow):
     def __init__(self, theme_qss: str = ""):
         super().__init__()
-        self.setWindowTitle("轻录")
-        self.resize(480, 320)
-        self.setMinimumSize(440, 300)
+        # Theme must be applied BEFORE constructing Fluent widgets so they use
+        # the dark palette from the start.
+        setTheme(Theme.DARK)
+        setThemeColor(ACCENT_BLUE)
 
+        self.resize(360, 220)
+        self.setMinimumSize(360, 220)
+        self.setMaximumWidth(560)
+
+        # Window icon set first so the title bar picks it up
+        from ..core.paths import assets_dir
+        icon_path = assets_dir() / "icons" / "app.png"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
+        title_bar = _TitleBar(self)
+        self.setTitleBar(title_bar)
+        title_bar.pin_toggled.connect(self._on_pin_toggled)
+        self.setWindowTitle("轻录")
+
+        # ---- State ----
         self.cfg = cfg_mod.load()
         self.bridge = _RecorderBridge()
         self.bridge.state_changed.connect(self._on_state)
         self.bridge.error.connect(self._on_error)
-
         self.recorder = Recorder(
             on_state_change=lambda s: self.bridge.state_changed.emit(s),
             on_error=lambda msg: self.bridge.error.emit(msg),
@@ -52,9 +137,6 @@ class MainWindow(QMainWindow):
 
         self.overlay = RegionOverlay()
         self.overlay.region_changed.connect(self._on_region_changed)
-        # Custom region is owned by MainWindow, not the overlay. The overlay's
-        # internal rect gets overwritten when we use it to indicate fullscreen
-        # or window mode, so we restore from this when entering custom mode.
         if self.cfg.last_region:
             x, y, w, h = self.cfg.last_region
             self._custom_rect = QRect(x, y, w, h)
@@ -66,233 +148,204 @@ class MainWindow(QMainWindow):
         self._window_follow_timer.setInterval(500)
         self._window_follow_timer.timeout.connect(self._refresh_window_rect)
         self._selected_hwnd: int | None = None
-        # Screen picker for fullscreen mode. None = all screens.
         self._selected_screen_geom: QRect | None = None
 
+        self._mode_values = ["fullscreen", "window", "custom"]
+        self._preset_values = ["ultra", "high", "medium", "low", "custom"]
+
+        # ---- Build UI ----
         self._build_ui()
         self._apply_theme(theme_qss)
         self._update_mode_ui()
         self._update_buttons()
 
-        # Hotkeys
+        # Hotkeys (Win32 RegisterHotKey)
         self.hotkeys = HotkeyManager()
-        self._register_hotkeys()
+        self.hotkeys.register(self.cfg.hotkey_toggle, self.toggle_record)
+        self.hotkeys.register(self.cfg.hotkey_pause, self.toggle_pause)
 
         # Tray
         self._build_tray()
 
-        # Status timer (elapsed time)
+        # Elapsed timer
         self._elapsed = 0
         self._elapsed_timer = QTimer(self)
         self._elapsed_timer.setInterval(1000)
         self._elapsed_timer.timeout.connect(self._tick_elapsed)
 
-        # Probe capabilities (HW encoder + DXGI + audio) in background — first
-        # record won't be laggy and we have the result cached for settings UI.
+        # Cache caps in background
         threading.Thread(target=fb.detect_capabilities, daemon=True).start()
 
-        # Re-enumerate screens if user plugs/unplugs a monitor
+        # Re-detect screens on plug/unplug
         gapp = QGuiApplication.instance()
         gapp.screenAdded.connect(self._on_screens_changed)
         gapp.screenRemoved.connect(self._on_screens_changed)
 
-    def _on_screens_changed(self, *_):
-        if self.cfg.region_mode == "fullscreen":
-            self._refresh_screen_list()
-
     # ---------- UI ----------
 
     def _build_ui(self):
-        # Fluent dark theme + cyan-blue accent
-        setTheme(Theme.DARK)
-        setThemeColor("#4cc2ff")
-
-        # Apply explicit dark bg — QMainWindow itself ignores Fluent's palette
-        self.setStyleSheet("""
-            QMainWindow { background-color: #1c1c1c; }
-            #centralWidget { background-color: #1c1c1c; }
-            #headerBar {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #2a2230, stop:1 #1c2840);
-                border-bottom: 1px solid #2e2e2e;
-            }
-            #headerStatus { color: #d0d0d0; font-size: 13px; }
-            #headerStatus[state="recording"] { color: #ff5050; font-weight: 600; }
-            #headerStatus[state="paused"] { color: #ffaa30; font-weight: 600; }
-            #headerStatus[state="ok"] { color: #4cd97b; }
-            #statusLabel { color: #888; padding: 4px; font-size: 12px; }
-            #statusLabel[state="ok"] { color: #4cd97b; }
-            QPushButton#pinBtn {
-                background: transparent;
-                border: 1px solid transparent;
-                border-radius: 6px;
-                color: #c0c4d2;
-                font-size: 14px;
-                padding: 0;
-            }
-            QPushButton#pinBtn:hover {
-                background-color: rgba(255, 255, 255, 0.08);
-                border-color: rgba(255, 255, 255, 0.12);
-            }
-            QPushButton#pinBtn:checked {
-                background-color: #5b8cff;
-                border-color: #5b8cff;
-                color: white;
-            }
-            QPushButton#pinBtn:checked:hover {
-                background-color: #6e9eff;
-                border-color: #6e9eff;
-            }
-        """)
-
         central = QWidget()
         central.setObjectName("centralWidget")
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        root.setContentsMargins(16, 8, 16, 12)
+        root.setSpacing(10)
 
-        # ---- Slim header bar: status on left, pin on right ----
-        header = QWidget()
-        header.setObjectName("headerBar")
-        header.setFixedHeight(44)
-        hl = QHBoxLayout(header)
-        hl.setContentsMargins(18, 0, 10, 0)
-        hl.setSpacing(10)
+        # --- Status row: dot + text ---
+        status_row = QHBoxLayout()
+        status_row.setSpacing(8)
+        status_row.setContentsMargins(0, 0, 0, 0)
         self.rec_dot = QLabel()
-        self.rec_dot.setFixedSize(10, 10)
-        self.rec_dot.setStyleSheet("background:#4a4a4a; border-radius:5px;")
-        hl.addWidget(self.rec_dot)
-        self.header_status = QLabel("待机")
-        self.header_status.setObjectName("headerStatus")
-        hl.addWidget(self.header_status)
-        hl.addStretch(1)
-        # Plain QPushButton for predictable :checked styling — Fluent's
-        # TransparentToolButton repaints itself via custom painter and ignores
-        # QSS :checked, which left the pin button looking "dead" after click.
-        self.pin_btn = QPushButton("📌")
-        self.pin_btn.setObjectName("pinBtn")
-        self.pin_btn.setCheckable(True)
-        self.pin_btn.setFixedSize(32, 28)
-        self.pin_btn.setToolTip("置顶窗口")
-        self.pin_btn.toggled.connect(self._on_pin_toggled)
-        hl.addWidget(self.pin_btn)
-        root.addWidget(header)
+        self.rec_dot.setFixedSize(8, 8)
+        self.rec_dot.setStyleSheet(f"background:{TEXT_TERTIARY}; border-radius:4px;")
+        self.status_label = QLabel("待机")
+        self.status_label.setObjectName("statusText")
+        status_row.addWidget(self.rec_dot)
+        status_row.addWidget(self.status_label)
+        status_row.addStretch(1)
+        root.addLayout(status_row)
 
-        # ---- Body container ----
-        body = QWidget()
-        body_lay = QVBoxLayout(body)
-        body_lay.setContentsMargins(16, 14, 16, 14)
-        body_lay.setSpacing(12)
-        root.addWidget(body, 1)
-
-        # ---- Settings card ----
-        card = SimpleCardWidget()
-        card_lay = QVBoxLayout(card)
-        card_lay.setContentsMargins(14, 12, 14, 12)
-        card_lay.setSpacing(10)
-
-        # Row: mode + preset
-        # Note: QFluentWidgets ComboBox.addItem doesn't reliably store userData,
-        # so we maintain parallel value lists indexed by combo position.
-        self._mode_values = ["fullscreen", "window", "custom"]
-        self._preset_values = ["ultra", "high", "medium", "low", "custom"]
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        mode_lbl = BodyLabel("模式")
-        mode_lbl.setFixedWidth(36)
-        row.addWidget(mode_lbl)
+        # --- Mode + Quality (no labels, combos self-describe) ---
+        sel_row = QHBoxLayout()
+        sel_row.setSpacing(8)
         self.mode_combo = ComboBox()
-        self.mode_combo.addItems(["全屏", "窗口", "自定义区域"])
+        self.mode_combo.addItems(["全屏", "窗口", "自定义"])
         try:
             self.mode_combo.setCurrentIndex(self._mode_values.index(self.cfg.region_mode))
         except ValueError:
             self.mode_combo.setCurrentIndex(0)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
-        row.addWidget(self.mode_combo, 1)
+        sel_row.addWidget(self.mode_combo, 1)
 
-        row.addSpacing(4)
-        q_lbl = BodyLabel("质量")
-        q_lbl.setFixedWidth(36)
-        row.addWidget(q_lbl)
         self.preset_combo = ComboBox()
-        self.preset_combo.addItems(["超高清 30M/60", "高 12M/60", "中 6M/30", "低 3M/30", "自定义"])
+        self.preset_combo.addItems(["超高清", "高清", "标清", "流畅", "自定义"])
         try:
             self.preset_combo.setCurrentIndex(self._preset_values.index(self.cfg.quality_preset))
         except ValueError:
             self.preset_combo.setCurrentIndex(2)
         self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
-        row.addWidget(self.preset_combo, 1)
-        card_lay.addLayout(row)
+        sel_row.addWidget(self.preset_combo, 1)
+        root.addLayout(sel_row)
 
-        # Row: screen picker (only fullscreen)
+        # --- Context row: screen picker OR window picker (visible per mode) ---
+        # Screen picker
         self.screen_row = QHBoxLayout()
-        self.screen_label = BodyLabel("屏幕")
-        self.screen_label.setFixedWidth(36)
+        self.screen_row.setSpacing(8)
         self.screen_combo = ComboBox()
-        self.screen_combo.setMinimumWidth(240)
+        self.screen_combo.setMinimumWidth(180)
         self.screen_combo.currentIndexChanged.connect(self._on_screen_selected)
         self.screen_refresh_btn = TransparentToolButton(FIF.SYNC)
-        self.screen_refresh_btn.setToolTip("刷新屏幕列表")
+        self.screen_refresh_btn.setFixedSize(28, 28)
+        self.screen_refresh_btn.setToolTip("刷新")
         self.screen_refresh_btn.clicked.connect(self._refresh_screen_list)
-        self.screen_row.addWidget(self.screen_label)
         self.screen_row.addWidget(self.screen_combo, 1)
         self.screen_row.addWidget(self.screen_refresh_btn)
-        card_lay.addLayout(self.screen_row)
+        root.addLayout(self.screen_row)
 
-        # Row: window picker (only window mode)
+        # Window picker
         self.window_row = QHBoxLayout()
-        self.window_label = BodyLabel("窗口")
-        self.window_label.setFixedWidth(36)
+        self.window_row.setSpacing(8)
         self.window_combo = ComboBox()
-        self.window_combo.setMinimumWidth(220)
-        self.refresh_btn = TransparentToolButton(FIF.SYNC)
-        self.refresh_btn.setToolTip("刷新窗口列表")
-        self.refresh_btn.clicked.connect(self._refresh_window_list)
+        self.window_combo.setMinimumWidth(180)
         self.window_combo.currentIndexChanged.connect(self._on_window_selected)
-        self.window_row.addWidget(self.window_label)
+        self.window_refresh_btn = TransparentToolButton(FIF.SYNC)
+        self.window_refresh_btn.setFixedSize(28, 28)
+        self.window_refresh_btn.setToolTip("刷新")
+        self.window_refresh_btn.clicked.connect(self._refresh_window_list)
         self.window_row.addWidget(self.window_combo, 1)
-        self.window_row.addWidget(self.refresh_btn)
-        card_lay.addLayout(self.window_row)
+        self.window_row.addWidget(self.window_refresh_btn)
+        root.addLayout(self.window_row)
 
-        body_lay.addWidget(card)
-
-        # ---- Action buttons ----
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-        self.start_btn = PushButton("●  开始录制    F9")
-        self.start_btn.setMinimumHeight(44)
+        # --- Record button (primary action) ---
+        self.start_btn = QPushButton("●  开始录制    F9")
         self.start_btn.setObjectName("recordBtn")
+        self.start_btn.setFixedHeight(38)
         self.start_btn.clicked.connect(self.toggle_record)
-        self._apply_record_btn_style(recording=False)
-        self.pause_btn = PushButton(FIF.PAUSE, "暂停  F10")
-        self.pause_btn.setMinimumHeight(44)
+        root.addWidget(self.start_btn)
+
+        # --- Footer: pause/open/settings icons ---
+        footer = QHBoxLayout()
+        footer.setSpacing(2)
+        footer.setContentsMargins(0, 0, 0, 0)
+        self.pause_btn = TransparentToolButton(FIF.PAUSE)
+        self.pause_btn.setFixedSize(28, 24)
+        self.pause_btn.setToolTip("暂停 (F10)")
+        self.pause_btn.setEnabled(False)
         self.pause_btn.clicked.connect(self.toggle_pause)
-        self.open_dir_btn = ToolButton(FIF.FOLDER)
-        self.open_dir_btn.setFixedSize(44, 44)
+        footer.addWidget(self.pause_btn)
+
+        footer.addStretch(1)
+
+        self.open_dir_btn = TransparentToolButton(FIF.FOLDER)
+        self.open_dir_btn.setFixedSize(28, 24)
         self.open_dir_btn.setToolTip("打开输出目录")
         self.open_dir_btn.clicked.connect(self.open_output_dir)
-        self.settings_btn = ToolButton(FIF.SETTING)
-        self.settings_btn.setFixedSize(44, 44)
+        footer.addWidget(self.open_dir_btn)
+
+        self.settings_btn = TransparentToolButton(FIF.SETTING)
+        self.settings_btn.setFixedSize(28, 24)
         self.settings_btn.setToolTip("设置")
         self.settings_btn.clicked.connect(self.open_settings)
-        btn_row.addWidget(self.start_btn, 3)
-        btn_row.addWidget(self.pause_btn, 2)
-        btn_row.addWidget(self.open_dir_btn)
-        btn_row.addWidget(self.settings_btn)
-        body_lay.addLayout(btn_row)
+        footer.addWidget(self.settings_btn)
+        root.addLayout(footer)
 
-        # ---- Status ----
-        self.status_label = QLabel("待机")
-        self.status_label.setObjectName("statusLabel")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        body_lay.addWidget(self.status_label)
-        body_lay.addStretch(1)
+        root.addStretch(1)
 
     def _apply_theme(self, qss: str):
-        # Most styling comes from QFluentWidgets' Theme.DARK; user QSS overrides last.
-        if qss:
-            self.setStyleSheet(self.styleSheet() + "\n" + qss)
+        self.setStyleSheet(f"""
+            #centralWidget {{ background-color: {BG_BASE}; }}
+            QMainWindow {{ background-color: {BG_BASE}; }}
+
+            #statusText {{ color: {TEXT_SECONDARY}; font-size: 12px; }}
+            #statusText[state="recording"] {{ color: {ACCENT_RED}; font-weight: 500; }}
+            #statusText[state="paused"] {{ color: #ffaa30; }}
+            #statusText[state="ok"] {{ color: #4cd97b; }}
+
+            /* Title bar */
+            StandardTitleBar {{ background-color: {BG_BASE}; }}
+            #titlePin {{
+                background: transparent; border: none;
+                color: {TEXT_SECONDARY}; font-size: 12px;
+            }}
+            #titlePin:hover {{ background: {BG_HOVER}; color: {TEXT_PRIMARY}; }}
+            #titlePin:checked {{
+                background: rgba(91, 140, 255, 0.20);
+                color: {ACCENT_BLUE};
+            }}
+            #titlePin:checked:hover {{ background: rgba(91, 140, 255, 0.30); }}
+
+            /* Combo boxes */
+            ComboBox {{
+                background-color: {BG_CARD};
+                border: 1px solid {HAIRLINE};
+                border-radius: 6px;
+                color: {TEXT_PRIMARY};
+                font-size: 12px;
+                padding: 4px 10px;
+                min-height: 28px;
+            }}
+            ComboBox:hover {{ border-color: #3a3a40; }}
+
+            /* Record button */
+            #recordBtn {{
+                background-color: {ACCENT_RED};
+                border: none; border-radius: 6px;
+                color: white; font-size: 13px; font-weight: 600;
+                letter-spacing: 1px;
+            }}
+            #recordBtn:hover {{ background-color: {ACCENT_RED_HOVER}; }}
+            #recordBtn:pressed {{ background-color: {ACCENT_RED_PRESS}; }}
+            #recordBtn:disabled {{ background-color: #3a3a3c; color: {TEXT_TERTIARY}; }}
+            #recordBtn[recording="true"] {{
+                background-color: {BG_CARD};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {HAIRLINE};
+            }}
+            #recordBtn[recording="true"]:hover {{ background-color: #1f1f21; }}
+
+            /* Tool buttons */
+            TransparentToolButton {{ border-radius: 4px; }}
+        """ + (("\n" + qss) if qss else ""))
 
     def _build_tray(self):
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
@@ -303,7 +356,9 @@ class MainWindow(QMainWindow):
         menu.addAction(a_show); menu.addAction(a_toggle); menu.addSeparator(); menu.addAction(a_quit)
         self.tray.setContextMenu(menu)
         self.tray.setToolTip("轻录")
-        self.tray.activated.connect(lambda r: self._show_from_tray() if r == QSystemTrayIcon.Trigger else None)
+        self.tray.activated.connect(
+            lambda r: self._show_from_tray() if r == QSystemTrayIcon.Trigger else None
+        )
         self.tray.show()
 
     def _show_from_tray(self):
@@ -322,15 +377,13 @@ class MainWindow(QMainWindow):
         is_window = mode == "window"
         is_fullscreen = mode == "fullscreen"
 
-        self.window_label.setVisible(is_window)
-        self.window_combo.setVisible(is_window)
-        self.refresh_btn.setVisible(is_window)
-        self.screen_label.setVisible(is_fullscreen)
-        self.screen_combo.setVisible(is_fullscreen)
+        # Show/hide rows by toggling each widget in the row
+        for w in (self.window_combo, self.window_refresh_btn):
+            w.setVisible(is_window)
+        for w in (self.screen_combo, self.screen_refresh_btn):
+            w.setVisible(is_fullscreen)
 
         if mode == "custom":
-            # Restore the user's saved custom rect — don't reuse whatever the
-            # overlay was last showing (could have been a screen or window rect).
             self.overlay.set_region_rect(QRect(self._custom_rect))
             self.overlay.show(style="edit")
             self.overlay.set_recording(False)
@@ -339,8 +392,6 @@ class MainWindow(QMainWindow):
             self._show_screen_indicator()
         elif mode == "window":
             self._refresh_window_list()
-        else:
-            self.overlay.hide()
 
         if not is_window:
             self._window_follow_timer.stop()
@@ -358,13 +409,13 @@ class MainWindow(QMainWindow):
         self._screen_values: list[QRect | None] = []
         for i, sc in enumerate(screens):
             g = sc.geometry()
-            tag = "（主屏）" if sc is primary else ""
-            labels.append(f"屏幕 {i + 1}{tag}  {g.width()}×{g.height()}  @({g.x()},{g.y()})")
+            tag = " (主屏)" if sc is primary else ""
+            labels.append(f"屏幕{i + 1}{tag}  {g.width()}×{g.height()}")
             self._screen_values.append(QRect(g))
             if sc is primary:
                 primary_idx = i
         if len(screens) > 1:
-            labels.append("全部屏幕（拼接录制）")
+            labels.append("全部屏幕")
             self._screen_values.append(None)
         self.screen_combo.addItems(labels)
         self.screen_combo.setCurrentIndex(primary_idx)
@@ -382,21 +433,29 @@ class MainWindow(QMainWindow):
         self._show_screen_indicator()
 
     def _show_screen_indicator(self):
-        """Show dashed indicator border around the selected screen."""
         geom = self._selected_screen_geom
         if geom is None:
-            # "all screens" — no single rect to indicate; hide overlay
             self.overlay.hide()
             return
         self.overlay.set_region_rect(QRect(geom))
         self.overlay.show(style="indicator")
         self.overlay.set_recording(False)
 
+    def _on_screens_changed(self, *_):
+        if self.cfg.region_mode == "fullscreen":
+            self._refresh_screen_list()
+
+    # ---------- Window picker ----------
+
     def _refresh_window_list(self):
         self._window_choices = list_windows()
         self.window_combo.blockSignals(True)
         self.window_combo.clear()
-        labels = [f"{w.title}  ({w.rect[2]}x{w.rect[3]})" for w in self._window_choices]
+        # Truncate titles in compact UI
+        labels = []
+        for w in self._window_choices:
+            t = w.title if len(w.title) <= 30 else (w.title[:28] + "…")
+            labels.append(f"{t}  {w.rect[2]}×{w.rect[3]}")
         self.window_combo.addItems(labels)
         self.window_combo.blockSignals(False)
         if self._window_choices:
@@ -414,14 +473,15 @@ class MainWindow(QMainWindow):
         self.overlay.set_recording(self.recorder.state.name != "IDLE")
 
     def _refresh_window_rect(self):
-        if self._selected_hwnd is None: return
+        if self._selected_hwnd is None:
+            return
         r = get_window_rect(self._selected_hwnd)
-        if r is None: return
+        if r is None:
+            return
         x, y, w, h = r
         self.overlay.set_region_rect(QRect(x, y, w, h))
 
     def _on_region_changed(self, r: QRect):
-        # Only persist when the user actively dragged in custom mode.
         if self.cfg.region_mode == "custom":
             self._custom_rect = QRect(r)
             self.cfg.last_region = [r.x(), r.y(), r.width(), r.height()]
@@ -442,17 +502,21 @@ class MainWindow(QMainWindow):
             return CaptureRegion(geom.x(), geom.y(), geom.width(), geom.height(), fullscreen=False)
         if mode == "window":
             if self._selected_hwnd is None:
-                self._show_warning("提示", "请先选择一个窗口")
+                self._show_warning("请先选择一个窗口")
                 return None
             r = get_window_rect(self._selected_hwnd)
             if r is None:
-                self._show_warning("提示", "无法获取窗口位置，可能已关闭")
+                self._show_warning("无法获取窗口位置，可能已关闭")
                 return None
             x, y, w, h = r
             return CaptureRegion(x, y, w, h, fullscreen=False)
-        # custom — use the MainWindow-owned custom rect (overlay may be hidden)
         r = self._custom_rect
         return CaptureRegion(r.x(), r.y(), r.width(), r.height(), fullscreen=False)
+
+    def _show_warning(self, content: str):
+        InfoBar.warning(title="提示", content=content, orient=Qt.Horizontal,
+                        isClosable=True, position=InfoBarPosition.TOP,
+                        duration=3000, parent=self)
 
     def toggle_record(self):
         if self.recorder.state is RecorderState.IDLE:
@@ -460,23 +524,15 @@ class MainWindow(QMainWindow):
         else:
             self.stop_record()
 
-    def _show_warning(self, title: str, content: str):
-        InfoBar.warning(
-            title=title, content=content, orient=Qt.Horizontal,
-            isClosable=True, position=InfoBarPosition.TOP, duration=4000, parent=self,
-        )
-
     def start_record(self):
         region = self._current_region()
         if region is None:
             return
-        # Switch overlay to recording look (any mode that has a visible overlay)
-        overlay_visible = self.cfg.region_mode == "custom" or (
-            self.cfg.region_mode == "fullscreen" and self._selected_screen_geom is not None
-        ) or self.cfg.region_mode == "window"
+        overlay_visible = (self.cfg.region_mode == "custom" or
+                          (self.cfg.region_mode == "fullscreen" and self._selected_screen_geom is not None) or
+                          self.cfg.region_mode == "window")
         if overlay_visible:
             self.overlay.set_recording(True)
-        # Pass screens info so ddagrab can pick the right monitor index
         screens = [(s.geometry().x(), s.geometry().y(),
                     s.geometry().width(), s.geometry().height())
                    for s in QGuiApplication.screens()]
@@ -494,20 +550,17 @@ class MainWindow(QMainWindow):
     def stop_record(self):
         out = self.recorder.stop()
         self._elapsed_timer.stop()
-        # Restore overlay to idle look in any mode that shows it
         self.overlay.set_recording(False)
         if out and out.exists():
             size_mb = out.stat().st_size / (1024 * 1024)
-            self.status_label.setText(f"✔ 已保存：{out.name}  ({size_mb:.1f} MB)")
+            self.status_label.setText(f"已保存 {out.name}  {size_mb:.1f} MB")
             self._set_status_state("ok")
-            self.tray.showMessage(
-                "录制完成",
-                f"{out.name}  ({size_mb:.1f} MB)\n位置：{out.parent}",
-                QSystemTrayIcon.Information, 5000,
-            )
+            self.tray.showMessage("录制完成",
+                                  f"{out.name}  ({size_mb:.1f} MB)\n{out.parent}",
+                                  QSystemTrayIcon.Information, 5000)
             self._last_output = out
         else:
-            self.status_label.setText("⚠ 录制失败 — 查看输出目录或重试")
+            self.status_label.setText("录制失败")
             self._set_status_state("")
 
     def toggle_pause(self):
@@ -521,36 +574,32 @@ class MainWindow(QMainWindow):
         self._update_buttons()
         if state is RecorderState.RECORDING:
             txt = f"录制中  {self._format_elapsed()}"
-            self.header_status.setText(txt)
             self.status_label.setText(txt)
             self._set_status_state("recording")
-            self._set_dot_color("#ff4040")
+            self._set_dot_color(ACCENT_RED)
         elif state is RecorderState.PAUSED:
             txt = f"已暂停  {self._format_elapsed()}"
-            self.header_status.setText(txt)
             self.status_label.setText(txt)
             self._set_status_state("paused")
             self._set_dot_color("#ffaa30")
         else:
-            self.header_status.setText("待机")
             self.status_label.setText("待机")
             self._set_status_state("")
-            self._set_dot_color("#4a4a4a")
+            self._set_dot_color(TEXT_TERTIARY)
 
     def _set_status_state(self, state: str):
-        for w in (self.header_status, self.status_label):
-            w.setProperty("state", state)
-            w.style().unpolish(w); w.style().polish(w)
+        self.status_label.setProperty("state", state)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def _set_dot_color(self, hex_color: str):
-        self.rec_dot.setStyleSheet(f"background:{hex_color}; border-radius:5px;")
+        self.rec_dot.setStyleSheet(f"background:{hex_color}; border-radius:4px;")
 
     @Slot(str)
     def _on_error(self, msg: str):
-        InfoBar.error(
-            title="录制错误", content=msg[:200], orient=Qt.Horizontal,
-            isClosable=True, position=InfoBarPosition.TOP, duration=6000, parent=self,
-        )
+        InfoBar.error(title="录制错误", content=msg[:200], orient=Qt.Horizontal,
+                      isClosable=True, position=InfoBarPosition.TOP,
+                      duration=6000, parent=self)
 
     def _update_buttons(self):
         s = self.recorder.state
@@ -558,79 +607,29 @@ class MainWindow(QMainWindow):
         if s is RecorderState.IDLE:
             self.start_btn.setText("●  开始录制    F9")
             self.pause_btn.setEnabled(False)
-            self.pause_btn.setText("暂停  F10")
-            self.pause_btn.setIcon(FIF.PAUSE)
-        else:
+        elif s is RecorderState.PAUSED:
             self.start_btn.setText("■  停止录制    F9")
             self.pause_btn.setEnabled(True)
-            if s is RecorderState.PAUSED:
-                self.pause_btn.setText("继续  F10")
-                self.pause_btn.setIcon(FIF.PLAY)
-            else:
-                self.pause_btn.setText("暂停  F10")
-                self.pause_btn.setIcon(FIF.PAUSE)
-        self._apply_record_btn_style(recording_now)
-
-    def _apply_record_btn_style(self, recording: bool):
-        """Per-instance QSS — Fluent PushButton's painter respects bg/color via QSS only when applied locally."""
-        if recording:
-            qss = """
-                QPushButton {
-                    background-color: #3a3a3a; color: #ffffff;
-                    border: 1px solid #3a3a3a; border-radius: 6px;
-                    font-weight: 600; font-size: 13px; padding: 0 12px;
-                }
-                QPushButton:hover { background-color: #4a4a4a; border-color: #4a4a4a; }
-                QPushButton:pressed { background-color: #2a2a2a; border-color: #2a2a2a; }
-            """
-        else:
-            qss = """
-                QPushButton {
-                    background-color: #e63946; color: #ffffff;
-                    border: 1px solid #e63946; border-radius: 6px;
-                    font-weight: 600; font-size: 13px; padding: 0 12px;
-                }
-                QPushButton:hover { background-color: #f04757; border-color: #f04757; }
-                QPushButton:pressed { background-color: #c92e3a; border-color: #c92e3a; }
-            """
-        self.start_btn.setStyleSheet(qss)
+        else:  # RECORDING
+            self.start_btn.setText("■  停止录制    F9")
+            self.pause_btn.setEnabled(True)
+        self.start_btn.setProperty("recording", "true" if recording_now else "false")
+        self.start_btn.style().unpolish(self.start_btn)
+        self.start_btn.style().polish(self.start_btn)
 
     def _tick_elapsed(self):
         if self.recorder.state is RecorderState.RECORDING:
             self._elapsed += 1
-            txt = f"录制中  {self._format_elapsed()}"
-            self.header_status.setText(txt)
-            self.status_label.setText(txt)
+            self.status_label.setText(f"录制中  {self._format_elapsed()}")
 
     def _format_elapsed(self) -> str:
         m, s = divmod(self._elapsed, 60)
         h, m = divmod(m, 60)
         return f"{h:02d}:{m:02d}:{s:02d}"
 
-    # ---------- Settings ----------
-
-    def _on_pin_toggled(self, on: bool):
-        # Topmost via Win32 SetWindowPos — declare argtypes so HWND_TOPMOST=-1
-        # gets sign-extended to a proper pointer-sized HWND on 64-bit.
-        # Visual feedback is handled by the QSS :checked pseudo-class.
-        import ctypes.wintypes as wt
-        user32 = ctypes.windll.user32
-        user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int,
-                                        ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                                        wt.UINT]
-        user32.SetWindowPos.restype = wt.BOOL
-        HWND_TOPMOST = wt.HWND(-1)
-        HWND_NOTOPMOST = wt.HWND(-2)
-        SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
-        user32.SetWindowPos(
-            wt.HWND(int(self.winId())),
-            HWND_TOPMOST if on else HWND_NOTOPMOST,
-            0, 0, 0, 0,
-            SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE,
-        )
+    # ---------- Actions ----------
 
     def open_output_dir(self):
-        """Open output dir in Explorer; highlight last recorded file if any."""
         last = getattr(self, "_last_output", None)
         if last and last.exists():
             try:
@@ -651,18 +650,26 @@ class MainWindow(QMainWindow):
             except ValueError:
                 pass
             cfg_mod.save(self.cfg)
-            InfoBar.success(
-                title="已保存", content="设置已生效", orient=Qt.Horizontal,
-                isClosable=True, position=InfoBarPosition.TOP, duration=2000, parent=self,
-            )
+            InfoBar.success(title="已保存", content="设置已生效", orient=Qt.Horizontal,
+                            isClosable=True, position=InfoBarPosition.TOP,
+                            duration=2000, parent=self)
 
-    # ---------- Hotkeys ----------
-
-    def _register_hotkeys(self):
-        # Win32 RegisterHotKey dispatches WM_HOTKEY to the main thread, so
-        # callbacks run on the Qt main thread — no signal marshaling needed.
-        self.hotkeys.register(self.cfg.hotkey_toggle, self.toggle_record)
-        self.hotkeys.register(self.cfg.hotkey_pause, self.toggle_pause)
+    def _on_pin_toggled(self, on: bool):
+        # SetWindowPos topmost — no native window recreation, no flash.
+        user32 = ctypes.windll.user32
+        user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int,
+                                        ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                        wt.UINT]
+        user32.SetWindowPos.restype = wt.BOOL
+        HWND_TOPMOST = wt.HWND(-1)
+        HWND_NOTOPMOST = wt.HWND(-2)
+        SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+        user32.SetWindowPos(
+            wt.HWND(int(self.winId())),
+            HWND_TOPMOST if on else HWND_NOTOPMOST,
+            0, 0, 0, 0,
+            SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE,
+        )
 
     # ---------- Lifecycle ----------
 
