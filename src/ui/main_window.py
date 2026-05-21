@@ -1,6 +1,7 @@
 """Main control panel: start/pause/stop + mode/preset + status."""
 from __future__ import annotations
 from pathlib import Path
+import ctypes
 import os
 import subprocess
 import threading
@@ -146,10 +147,11 @@ class MainWindow(QMainWindow):
         hl.addWidget(self.header_status)
         hl.addStretch(1)
         self.pin_btn = TransparentToolButton(FIF.PIN)
+        self.pin_btn.setObjectName("pinBtn")
         self.pin_btn.setCheckable(True)
         self.pin_btn.setFixedSize(32, 32)
         self.pin_btn.setToolTip("置顶窗口")
-        self.pin_btn.toggled.connect(self._toggle_always_on_top)
+        self.pin_btn.toggled.connect(self._on_pin_toggled)
         hl.addWidget(self.pin_btn)
         root.addWidget(header)
 
@@ -583,9 +585,27 @@ class MainWindow(QMainWindow):
 
     # ---------- Settings ----------
 
-    def _toggle_always_on_top(self, on: bool):
-        self.setWindowFlag(Qt.WindowStaysOnTopHint, on)
-        self.show()  # Re-show is required after changing window flags
+    def _on_pin_toggled(self, on: bool):
+        # 1. Apply topmost via Win32 (no window recreation = no black flash)
+        HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+        SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+        ctypes.windll.user32.SetWindowPos(
+            int(self.winId()),
+            HWND_TOPMOST if on else HWND_NOTOPMOST,
+            0, 0, 0, 0,
+            SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE,
+        )
+        # 2. Visual feedback — per-instance QSS reliably overrides Fluent's painter
+        if on:
+            self.pin_btn.setStyleSheet("""
+                QToolButton {
+                    background-color: rgba(91, 140, 255, 230);
+                    border-radius: 6px;
+                }
+                QToolButton:hover { background-color: rgba(110, 158, 255, 245); }
+            """)
+        else:
+            self.pin_btn.setStyleSheet("")
 
     def open_output_dir(self):
         """Open output dir in Explorer; highlight last recorded file if any."""
@@ -617,18 +637,10 @@ class MainWindow(QMainWindow):
     # ---------- Hotkeys ----------
 
     def _register_hotkeys(self):
-        # Thread-safe: keyboard callbacks run on a worker thread; marshal via signal
-        self.hotkeys.register(self.cfg.hotkey_toggle, lambda: self.bridge.state_changed.emit("__toggle__"))
-        self.hotkeys.register(self.cfg.hotkey_pause, lambda: self.bridge.state_changed.emit("__pause__"))
-        # Override bridge handler to also catch hotkey tokens
-        self.bridge.state_changed.connect(self._on_hotkey_token)
-
-    @Slot(object)
-    def _on_hotkey_token(self, token):
-        if token == "__toggle__":
-            self.toggle_record()
-        elif token == "__pause__":
-            self.toggle_pause()
+        # Win32 RegisterHotKey dispatches WM_HOTKEY to the main thread, so
+        # callbacks run on the Qt main thread — no signal marshaling needed.
+        self.hotkeys.register(self.cfg.hotkey_toggle, self.toggle_record)
+        self.hotkeys.register(self.cfg.hotkey_pause, self.toggle_pause)
 
     # ---------- Lifecycle ----------
 
