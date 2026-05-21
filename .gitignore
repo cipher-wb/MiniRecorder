@@ -11,3 +11,6 @@ ffmpeg/ffmpeg.exe
 
 # Local development previews
 preview*.png
+
+# Installer outputs (built locally per release)
+installer_dist/

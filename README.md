@@ -42,6 +42,25 @@ python -m venv venv
 # 输出：dist\MiniRecorder.exe
 ```
 
+## 制作 Windows 安装包
+
+需要先用 winget 安装 Inno Setup：
+
+```powershell
+winget install --id JRSoftware.InnoSetup
+```
+
+然后编译安装包：
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer.iss
+# 输出：installer_dist\轻录_Setup_1.0.0.exe
+```
+
+`ChineseSimplified.isl` 是中文界面语言包，已附在仓库内（Inno Setup 官方不默认带）。
+
+安装包会引导用户安装到 `Program Files\MiniRecorder`，生成开始菜单和（可选）桌面快捷方式，附带卸载器。
+
 注意：`ffmpeg\ffmpeg.exe` 必须存在于工程根目录的 `ffmpeg\` 下，会被打进 exe。当前内置的是 Gyan 的 full build（约 213MB）；如果要减小 exe 体积，可以替换为 [essentials build](https://www.gyan.dev/ffmpeg/builds/)（约 80MB），功能（gdigrab + dshow + libx264 + aac）完全够用。
 
 ## 系统声音录制
