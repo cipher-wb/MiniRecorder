@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt, QRect, QTimer, Signal, QObject, Slot, QUrl
 from PySide6.QtGui import QGuiApplication, QIcon, QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSystemTrayIcon, QMenu, QFrame, QSizePolicy, QLabel,
+    QSystemTrayIcon, QMenu, QFrame, QSizePolicy, QLabel, QPushButton,
 )
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, TransparentToolButton, ToolButton,
@@ -122,6 +122,27 @@ class MainWindow(QMainWindow):
             #headerStatus[state="ok"] { color: #4cd97b; }
             #statusLabel { color: #888; padding: 4px; font-size: 12px; }
             #statusLabel[state="ok"] { color: #4cd97b; }
+            QPushButton#pinBtn {
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 6px;
+                color: #c0c4d2;
+                font-size: 14px;
+                padding: 0;
+            }
+            QPushButton#pinBtn:hover {
+                background-color: rgba(255, 255, 255, 0.08);
+                border-color: rgba(255, 255, 255, 0.12);
+            }
+            QPushButton#pinBtn:checked {
+                background-color: #5b8cff;
+                border-color: #5b8cff;
+                color: white;
+            }
+            QPushButton#pinBtn:checked:hover {
+                background-color: #6e9eff;
+                border-color: #6e9eff;
+            }
         """)
 
         central = QWidget()
@@ -146,10 +167,13 @@ class MainWindow(QMainWindow):
         self.header_status.setObjectName("headerStatus")
         hl.addWidget(self.header_status)
         hl.addStretch(1)
-        self.pin_btn = TransparentToolButton(FIF.PIN)
+        # Plain QPushButton for predictable :checked styling — Fluent's
+        # TransparentToolButton repaints itself via custom painter and ignores
+        # QSS :checked, which left the pin button looking "dead" after click.
+        self.pin_btn = QPushButton("📌")
         self.pin_btn.setObjectName("pinBtn")
         self.pin_btn.setCheckable(True)
-        self.pin_btn.setFixedSize(32, 32)
+        self.pin_btn.setFixedSize(32, 28)
         self.pin_btn.setToolTip("置顶窗口")
         self.pin_btn.toggled.connect(self._on_pin_toggled)
         hl.addWidget(self.pin_btn)
@@ -586,26 +610,24 @@ class MainWindow(QMainWindow):
     # ---------- Settings ----------
 
     def _on_pin_toggled(self, on: bool):
-        # 1. Apply topmost via Win32 (no window recreation = no black flash)
-        HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+        # Topmost via Win32 SetWindowPos — declare argtypes so HWND_TOPMOST=-1
+        # gets sign-extended to a proper pointer-sized HWND on 64-bit.
+        # Visual feedback is handled by the QSS :checked pseudo-class.
+        import ctypes.wintypes as wt
+        user32 = ctypes.windll.user32
+        user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int,
+                                        ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                        wt.UINT]
+        user32.SetWindowPos.restype = wt.BOOL
+        HWND_TOPMOST = wt.HWND(-1)
+        HWND_NOTOPMOST = wt.HWND(-2)
         SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
-        ctypes.windll.user32.SetWindowPos(
-            int(self.winId()),
+        user32.SetWindowPos(
+            wt.HWND(int(self.winId())),
             HWND_TOPMOST if on else HWND_NOTOPMOST,
             0, 0, 0, 0,
             SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE,
         )
-        # 2. Visual feedback — per-instance QSS reliably overrides Fluent's painter
-        if on:
-            self.pin_btn.setStyleSheet("""
-                QToolButton {
-                    background-color: rgba(91, 140, 255, 230);
-                    border-radius: 6px;
-                }
-                QToolButton:hover { background-color: rgba(110, 158, 255, 245); }
-            """)
-        else:
-            self.pin_btn.setStyleSheet("")
 
     def open_output_dir(self):
         """Open output dir in Explorer; highlight last recorded file if any."""
