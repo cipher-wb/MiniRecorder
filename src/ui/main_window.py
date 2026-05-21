@@ -309,7 +309,7 @@ class MainWindow(QMainWindow):
         menu = QMenu()
         a_show = QAction("显示主窗口", self); a_show.triggered.connect(self._show_from_tray)
         a_toggle = QAction("开始/停止录制", self); a_toggle.triggered.connect(self.toggle_record)
-        a_quit = QAction("退出", self); a_quit.triggered.connect(QApplication.instance().quit)
+        a_quit = QAction("退出", self); a_quit.triggered.connect(self._real_quit)
         menu.addAction(a_show); menu.addAction(a_toggle); menu.addSeparator(); menu.addAction(a_quit)
         self.tray.setContextMenu(menu)
         self.tray.setToolTip("轻录")
@@ -320,6 +320,25 @@ class MainWindow(QMainWindow):
 
     def _show_from_tray(self):
         self.showNormal(); self.raise_(); self.activateWindow()
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        # Qt's showNormal() can call SetWindowPos(HWND_TOP) which clears
+        # WS_EX_TOPMOST. Re-apply the pin state every time the window shows.
+        if hasattr(self, "pin_btn") and self.pin_btn.isChecked():
+            self._on_pin_toggled(True)
+        # Restore the overlay (it was hidden on close-to-tray)
+        if hasattr(self, "overlay"):
+            self._update_mode_ui()
+
+    def _real_quit(self):
+        """Full shutdown — called from tray '退出' menu, not from window close."""
+        cfg_mod.save(self.cfg)
+        if self.recorder.state is not RecorderState.IDLE:
+            self.recorder.stop()
+        self.hotkeys.unregister_all()
+        self.overlay.destroy()
+        QApplication.instance().quit()
 
     # ---------- Mode / region ----------
 
@@ -631,9 +650,9 @@ class MainWindow(QMainWindow):
     # ---------- Lifecycle ----------
 
     def closeEvent(self, ev):
+        # Close-to-tray semantics: persist config, hide the visible overlay
+        # (but keep it alive), keep the recorder and hotkeys running so F9
+        # still works from the tray. Full cleanup happens in _real_quit.
         cfg_mod.save(self.cfg)
-        if self.recorder.state is not RecorderState.IDLE:
-            self.recorder.stop()
-        self.hotkeys.unregister_all()
-        self.overlay.destroy()
+        self.overlay.hide()
         super().closeEvent(ev)
