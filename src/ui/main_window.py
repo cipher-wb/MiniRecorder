@@ -15,10 +15,9 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QRect, QTimer, Signal, QObject, Slot, QUrl
 from PySide6.QtGui import QGuiApplication, QIcon, QAction, QDesktopServices, QColor
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSystemTrayIcon, QMenu,
-    QLabel, QPushButton, QSizePolicy,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSystemTrayIcon,
+    QMenu, QLabel, QPushButton, QSizePolicy,
 )
-from qframelesswindow import FramelessMainWindow, StandardTitleBar
 from qfluentwidgets import (
     ComboBox, TransparentToolButton, ToolButton, FluentIcon as FIF,
     setTheme, Theme, setThemeColor, InfoBar, InfoBarPosition,
@@ -55,75 +54,21 @@ class _RecorderBridge(QObject):
     error = Signal(str)
 
 
-class _TitleBar(StandardTitleBar):
-    """Compact title bar with an injected pin (always-on-top) button."""
-
-    pin_toggled = Signal(bool)
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.setFixedHeight(32)
-        self.maxBtn.hide()
-
-        self.titleLabel.setStyleSheet(
-            f"color: {TEXT_PRIMARY}; font-size: 12px; font-weight: 500; padding-left: 4px;"
-        )
-
-        # Force light icons + appropriate hover backgrounds for dark theme.
-        # qframelesswindow's theme detection defaults to dark icons in some setups.
-        light = QColor("#c8c8cc")
-        bright = QColor("#ffffff")
-        hover_bg = QColor(255, 255, 255, 18)
-        press_bg = QColor(255, 255, 255, 32)
-        close_hover = QColor(232, 17, 35, 230)
-        close_press = QColor(232, 17, 35, 255)
-        for b in (self.minBtn, self.maxBtn):
-            b.setNormalColor(light)
-            b.setHoverColor(bright)
-            b.setPressedColor(bright)
-            b.setNormalBackgroundColor(QColor(0, 0, 0, 0))
-            b.setHoverBackgroundColor(hover_bg)
-            b.setPressedBackgroundColor(press_bg)
-        self.closeBtn.setNormalColor(light)
-        self.closeBtn.setHoverColor(bright)
-        self.closeBtn.setPressedColor(bright)
-        self.closeBtn.setNormalBackgroundColor(QColor(0, 0, 0, 0))
-        self.closeBtn.setHoverBackgroundColor(close_hover)
-        self.closeBtn.setPressedBackgroundColor(close_press)
-
-        self.pin_btn = QPushButton("📌", self)
-        self.pin_btn.setObjectName("titlePin")
-        self.pin_btn.setCheckable(True)
-        self.pin_btn.setFixedSize(40, 32)
-        self.pin_btn.setToolTip("置顶")
-        self.pin_btn.toggled.connect(self.pin_toggled)
-
-        idx = self.hBoxLayout.indexOf(self.minBtn)
-        self.hBoxLayout.insertWidget(idx, self.pin_btn, 0, Qt.AlignRight | Qt.AlignTop)
-
-
-class MainWindow(FramelessMainWindow):
+class MainWindow(QMainWindow):
     def __init__(self, theme_qss: str = ""):
         super().__init__()
-        # Theme must be applied BEFORE constructing Fluent widgets so they use
-        # the dark palette from the start.
         setTheme(Theme.DARK)
         setThemeColor(ACCENT_BLUE)
 
-        self.resize(360, 220)
-        self.setMinimumSize(360, 220)
+        self.setWindowTitle("轻录")
+        self.resize(360, 240)
+        self.setMinimumSize(360, 240)
         self.setMaximumWidth(560)
 
-        # Window icon set first so the title bar picks it up
         from ..core.paths import assets_dir
         icon_path = assets_dir() / "icons" / "app.png"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
-
-        title_bar = _TitleBar(self)
-        self.setTitleBar(title_bar)
-        title_bar.pin_toggled.connect(self._on_pin_toggled)
-        self.setWindowTitle("轻录")
 
         # ---- State ----
         self.cfg = cfg_mod.load()
@@ -191,7 +136,7 @@ class MainWindow(FramelessMainWindow):
         root.setContentsMargins(16, 8, 16, 12)
         root.setSpacing(10)
 
-        # --- Status row: dot + text ---
+        # --- Status row: dot + text + pin button (right) ---
         status_row = QHBoxLayout()
         status_row.setSpacing(8)
         status_row.setContentsMargins(0, 0, 0, 0)
@@ -203,6 +148,15 @@ class MainWindow(FramelessMainWindow):
         status_row.addWidget(self.rec_dot)
         status_row.addWidget(self.status_label)
         status_row.addStretch(1)
+
+        # Pin (always-on-top) — native QPushButton for reliable :checked styling
+        self.pin_btn = QPushButton("📌")
+        self.pin_btn.setObjectName("pinBtn")
+        self.pin_btn.setCheckable(True)
+        self.pin_btn.setFixedSize(26, 22)
+        self.pin_btn.setToolTip("置顶")
+        self.pin_btn.toggled.connect(self._on_pin_toggled)
+        status_row.addWidget(self.pin_btn)
         root.addLayout(status_row)
 
         # --- Mode + Quality (no labels, combos self-describe) ---
@@ -301,18 +255,24 @@ class MainWindow(FramelessMainWindow):
             #statusText[state="paused"] {{ color: #ffaa30; }}
             #statusText[state="ok"] {{ color: #4cd97b; }}
 
-            /* Title bar */
-            StandardTitleBar {{ background-color: {BG_BASE}; }}
-            #titlePin {{
-                background: transparent; border: none;
-                color: {TEXT_SECONDARY}; font-size: 12px;
+            /* Pin button — compact toggle inline in status row */
+            QPushButton#pinBtn {{
+                background: transparent; border: 1px solid transparent;
+                border-radius: 4px; color: {TEXT_SECONDARY};
+                font-size: 11px; padding: 0;
             }}
-            #titlePin:hover {{ background: {BG_HOVER}; color: {TEXT_PRIMARY}; }}
-            #titlePin:checked {{
-                background: rgba(91, 140, 255, 0.20);
+            QPushButton#pinBtn:hover {{
+                background: {BG_HOVER}; border-color: {HAIRLINE};
+                color: {TEXT_PRIMARY};
+            }}
+            QPushButton#pinBtn:checked {{
+                background: rgba(91, 140, 255, 0.18);
+                border-color: rgba(91, 140, 255, 0.35);
                 color: {ACCENT_BLUE};
             }}
-            #titlePin:checked:hover {{ background: rgba(91, 140, 255, 0.30); }}
+            QPushButton#pinBtn:checked:hover {{
+                background: rgba(91, 140, 255, 0.26);
+            }}
 
             /* Combo boxes */
             ComboBox {{
