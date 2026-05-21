@@ -26,6 +26,8 @@ class AppConfig:
     # Performance / quality knobs
     use_hw_encoder: bool = True             # NVENC/QSV/AMF auto-select; off = libx264 (CPU)
     use_dxgi_capture: bool = True           # ddagrab when possible; off = gdigrab
+    # File naming: <prefix>_<YYYYMMDD_HHMMSS>.mp4
+    filename_prefix: str = "record"
 
     def preset_params(self) -> tuple[float, int]:
         """Return (bitrate_mbps, fps) for current preset."""

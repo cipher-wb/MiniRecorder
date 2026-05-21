@@ -67,7 +67,10 @@ class Recorder:
         out_dir = Path(cfg.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-        output = out_dir / f"record_{ts}.mp4"
+        # Sanitize prefix — strip filesystem-unsafe chars and empty fallback
+        raw = (cfg.filename_prefix or "record").strip()
+        safe = "".join(c for c in raw if c not in '<>:"/\\|?*\x00') or "record"
+        output = out_dir / f"{safe}_{ts}.mp4"
 
         caps = fb.detect_capabilities()
         audio_device = caps.audio_device if cfg.record_audio else None

@@ -38,7 +38,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.cfg = cfg
         self.setWindowTitle("设置")
-        self.setMinimumSize(540, 480)
+        self.setMinimumSize(540, 540)
         self.setModal(True)
         self.setStyleSheet("""
             QDialog { background-color: #1c1c1c; }
@@ -107,6 +107,18 @@ class SettingsDialog(QDialog):
         if not caps.has_ddagrab:
             self.use_dxgi.setEnabled(False)
 
+        # Filename prefix
+        self.prefix = LineEdit()
+        self.prefix.setText(cfg.filename_prefix)
+        self.prefix.setPlaceholderText("record")
+        self.prefix.setMinimumHeight(_FIELD_H)
+        root.addLayout(_row("文件名前缀", self.prefix))
+        hint_prefix = CaptionLabel(
+            f"格式：<前缀>_年月日_时分秒.mp4   例：{cfg.filename_prefix or 'record'}_20260521_193015.mp4"
+        )
+        hint_prefix.setStyleSheet("color:#666; padding-left:100px;")
+        root.addWidget(hint_prefix)
+
         # Output dir
         out_row = QHBoxLayout()
         out_row.setSpacing(10)
@@ -157,6 +169,8 @@ class SettingsDialog(QDialog):
         cfg.record_audio = self.record_audio.isChecked()
         cfg.use_hw_encoder = self.use_hw.isChecked()
         cfg.use_dxgi_capture = self.use_dxgi.isChecked()
+        prefix = self.prefix.text().strip()
+        cfg.filename_prefix = prefix if prefix else "record"
         d = self.out_dir.text().strip()
         if d:
             Path(d).mkdir(parents=True, exist_ok=True)
