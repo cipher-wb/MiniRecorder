@@ -62,8 +62,8 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("轻录")
         # Initial size; final height is set by _update_mode_ui based on mode
-        self.resize(360, 190)
-        self.setFixedWidth(360)
+        self.resize(280, 190)
+        self.setFixedWidth(280)
 
         from ..core.paths import assets_dir
         icon_path = assets_dir() / "icons" / "app.png"
@@ -184,12 +184,11 @@ class MainWindow(QMainWindow):
         # --- Context row: screen picker OR window picker (wrapped in widgets
         # so setVisible(False) fully collapses their height) ---
         self.screen_widget = QWidget()
-        sr = QHBoxLayout(self.screen_widget); sr.setContentsMargins(0, 0, 0, 0); sr.setSpacing(8)
+        sr = QHBoxLayout(self.screen_widget); sr.setContentsMargins(0, 0, 0, 0); sr.setSpacing(6)
         self.screen_combo = ComboBox()
-        self.screen_combo.setMinimumWidth(180)
         self.screen_combo.currentIndexChanged.connect(self._on_screen_selected)
         self.screen_refresh_btn = TransparentToolButton(FIF.SYNC)
-        self.screen_refresh_btn.setFixedSize(28, 28)
+        self.screen_refresh_btn.setFixedSize(24, 24)
         self.screen_refresh_btn.setToolTip("刷新")
         self.screen_refresh_btn.clicked.connect(self._refresh_screen_list)
         sr.addWidget(self.screen_combo, 1)
@@ -197,24 +196,27 @@ class MainWindow(QMainWindow):
         root.addWidget(self.screen_widget)
 
         self.window_widget = QWidget()
-        wr = QHBoxLayout(self.window_widget); wr.setContentsMargins(0, 0, 0, 0); wr.setSpacing(8)
+        wr = QHBoxLayout(self.window_widget); wr.setContentsMargins(0, 0, 0, 0); wr.setSpacing(6)
         self.window_combo = ComboBox()
-        self.window_combo.setMinimumWidth(180)
         self.window_combo.currentIndexChanged.connect(self._on_window_selected)
         self.window_refresh_btn = TransparentToolButton(FIF.SYNC)
-        self.window_refresh_btn.setFixedSize(28, 28)
+        self.window_refresh_btn.setFixedSize(24, 24)
         self.window_refresh_btn.setToolTip("刷新")
         self.window_refresh_btn.clicked.connect(self._refresh_window_list)
         wr.addWidget(self.window_combo, 1)
         wr.addWidget(self.window_refresh_btn)
         root.addWidget(self.window_widget)
 
-        # --- Record button (primary action) ---
-        self.start_btn = QPushButton("●  开始录制    F9")
+        # --- Record button (primary action) — narrower, centered ---
+        self.start_btn = QPushButton("●  开始录制")
         self.start_btn.setObjectName("recordBtn")
-        self.start_btn.setFixedHeight(38)
+        self.start_btn.setFixedSize(160, 36)
         self.start_btn.clicked.connect(self.toggle_record)
-        root.addWidget(self.start_btn)
+        rec_row = QHBoxLayout()
+        rec_row.addStretch(1)
+        rec_row.addWidget(self.start_btn)
+        rec_row.addStretch(1)
+        root.addLayout(rec_row)
 
         # --- Footer: pause/open/settings icons ---
         footer = QHBoxLayout()
@@ -529,7 +531,8 @@ class MainWindow(QMainWindow):
         self.overlay.set_recording(False)
         if out and out.exists():
             size_mb = out.stat().st_size / (1024 * 1024)
-            self.status_label.setText(f"已保存 {out.name}  {size_mb:.1f} MB")
+            # Compact status — full filename goes in tray notification only
+            self.status_label.setText(f"已保存  {size_mb:.1f} MB")
             self._set_status_state("ok")
             self.tray.showMessage("录制完成",
                                   f"{out.name}  ({size_mb:.1f} MB)\n{out.parent}",
@@ -581,13 +584,10 @@ class MainWindow(QMainWindow):
         s = self.recorder.state
         recording_now = s is not RecorderState.IDLE
         if s is RecorderState.IDLE:
-            self.start_btn.setText("●  开始录制    F9")
+            self.start_btn.setText("●  开始录制")
             self.pause_btn.setEnabled(False)
-        elif s is RecorderState.PAUSED:
-            self.start_btn.setText("■  停止录制    F9")
-            self.pause_btn.setEnabled(True)
-        else:  # RECORDING
-            self.start_btn.setText("■  停止录制    F9")
+        else:
+            self.start_btn.setText("■  停止录制")
             self.pause_btn.setEnabled(True)
         self.start_btn.setProperty("recording", "true" if recording_now else "false")
         self.start_btn.style().unpolish(self.start_btn)
