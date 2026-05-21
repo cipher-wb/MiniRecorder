@@ -1,0 +1,8 @@
+/* Custom theme overrides. Edit colors / fonts here; replace icons under assets/icons/. */
+
+/* Example "cat" theme — uncomment to try
+QMainWindow { background: #fff5f7; }
+QWidget { color: #4a3a40; }
+QPushButton { background: #ffd7e3; border: 1px solid #f5a8c0; }
+QPushButton#startBtn { background: #ff7aa0; border-color: #ff7aa0; }
+*/
