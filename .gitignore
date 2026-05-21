@@ -8,3 +8,6 @@ __pycache__/
 # Bundled FFmpeg is too large for GitHub (213MB > 100MB limit).
 # Download from https://www.gyan.dev/ffmpeg/builds/ and place at ffmpeg/ffmpeg.exe.
 ffmpeg/ffmpeg.exe
+
+# Local development previews
+preview*.png

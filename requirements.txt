@@ -1,4 +1,5 @@
 PySide6>=6.7
+PySide6-Fluent-Widgets[full]>=1.7
 keyboard>=0.13.5
 pywin32>=306
 pyinstaller>=6.0

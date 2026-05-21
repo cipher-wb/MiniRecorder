@@ -22,12 +22,16 @@ class CaptureRegion:
         return CaptureRegion(self.x, self.y, self.w - (self.w % 2), self.h - (self.h % 2), self.fullscreen)
 
 
+_CREATE_NO_WINDOW = 0x08000000
+
+
 def list_dshow_audio_devices() -> list[str]:
     """Return names of available DirectShow audio capture devices."""
     try:
         proc = subprocess.run(
             [str(ffmpeg_path()), "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
             capture_output=True, text=True, timeout=10, encoding="utf-8", errors="replace",
+            creationflags=_CREATE_NO_WINDOW,
         )
     except Exception:
         return []

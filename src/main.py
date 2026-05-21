@@ -25,7 +25,7 @@ def main() -> int:
         __import__("PySide6.QtCore", fromlist=["Qt"]).Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
     app = QApplication(sys.argv)
-    app.setApplicationName("MiniRecorder")
+    app.setApplicationName("轻录")
     app.setQuitOnLastWindowClosed(False)  # keep tray alive
 
     icon_path = assets_dir() / "icons" / "app.png"
