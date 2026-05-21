@@ -61,9 +61,9 @@ class MainWindow(QMainWindow):
         setThemeColor(ACCENT_BLUE)
 
         self.setWindowTitle("轻录")
-        self.resize(360, 240)
-        self.setMinimumSize(360, 240)
-        self.setMaximumWidth(560)
+        # Initial size; final height is set by _update_mode_ui based on mode
+        self.resize(360, 190)
+        self.setFixedWidth(360)
 
         from ..core.paths import assets_dir
         icon_path = assets_dir() / "icons" / "app.png"
@@ -133,8 +133,8 @@ class MainWindow(QMainWindow):
         central.setObjectName("centralWidget")
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(16, 8, 16, 12)
-        root.setSpacing(10)
+        root.setContentsMargins(14, 10, 14, 10)
+        root.setSpacing(8)
 
         # --- Status row: dot + text + pin button (right) ---
         status_row = QHBoxLayout()
@@ -181,10 +181,10 @@ class MainWindow(QMainWindow):
         sel_row.addWidget(self.preset_combo, 1)
         root.addLayout(sel_row)
 
-        # --- Context row: screen picker OR window picker (visible per mode) ---
-        # Screen picker
-        self.screen_row = QHBoxLayout()
-        self.screen_row.setSpacing(8)
+        # --- Context row: screen picker OR window picker (wrapped in widgets
+        # so setVisible(False) fully collapses their height) ---
+        self.screen_widget = QWidget()
+        sr = QHBoxLayout(self.screen_widget); sr.setContentsMargins(0, 0, 0, 0); sr.setSpacing(8)
         self.screen_combo = ComboBox()
         self.screen_combo.setMinimumWidth(180)
         self.screen_combo.currentIndexChanged.connect(self._on_screen_selected)
@@ -192,13 +192,12 @@ class MainWindow(QMainWindow):
         self.screen_refresh_btn.setFixedSize(28, 28)
         self.screen_refresh_btn.setToolTip("刷新")
         self.screen_refresh_btn.clicked.connect(self._refresh_screen_list)
-        self.screen_row.addWidget(self.screen_combo, 1)
-        self.screen_row.addWidget(self.screen_refresh_btn)
-        root.addLayout(self.screen_row)
+        sr.addWidget(self.screen_combo, 1)
+        sr.addWidget(self.screen_refresh_btn)
+        root.addWidget(self.screen_widget)
 
-        # Window picker
-        self.window_row = QHBoxLayout()
-        self.window_row.setSpacing(8)
+        self.window_widget = QWidget()
+        wr = QHBoxLayout(self.window_widget); wr.setContentsMargins(0, 0, 0, 0); wr.setSpacing(8)
         self.window_combo = ComboBox()
         self.window_combo.setMinimumWidth(180)
         self.window_combo.currentIndexChanged.connect(self._on_window_selected)
@@ -206,9 +205,9 @@ class MainWindow(QMainWindow):
         self.window_refresh_btn.setFixedSize(28, 28)
         self.window_refresh_btn.setToolTip("刷新")
         self.window_refresh_btn.clicked.connect(self._refresh_window_list)
-        self.window_row.addWidget(self.window_combo, 1)
-        self.window_row.addWidget(self.window_refresh_btn)
-        root.addLayout(self.window_row)
+        wr.addWidget(self.window_combo, 1)
+        wr.addWidget(self.window_refresh_btn)
+        root.addWidget(self.window_widget)
 
         # --- Record button (primary action) ---
         self.start_btn = QPushButton("●  开始录制    F9")
@@ -242,8 +241,6 @@ class MainWindow(QMainWindow):
         self.settings_btn.clicked.connect(self.open_settings)
         footer.addWidget(self.settings_btn)
         root.addLayout(footer)
-
-        root.addStretch(1)
 
     def _apply_theme(self, qss: str):
         self.setStyleSheet(f"""
@@ -337,11 +334,11 @@ class MainWindow(QMainWindow):
         is_window = mode == "window"
         is_fullscreen = mode == "fullscreen"
 
-        # Show/hide rows by toggling each widget in the row
-        for w in (self.window_combo, self.window_refresh_btn):
-            w.setVisible(is_window)
-        for w in (self.screen_combo, self.screen_refresh_btn):
-            w.setVisible(is_fullscreen)
+        # Collapse rows by hiding the wrapping widget (takes 0 height)
+        self.window_widget.setVisible(is_window)
+        self.screen_widget.setVisible(is_fullscreen)
+        # Adjust window height: picker mode needs ~40 more px
+        self.setFixedHeight(230 if (is_window or is_fullscreen) else 190)
 
         if mode == "custom":
             self.overlay.set_region_rect(QRect(self._custom_rect))

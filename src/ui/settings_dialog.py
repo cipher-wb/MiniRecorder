@@ -55,10 +55,11 @@ class SettingsDialog(QDialog):
 
         # Quality preset
         self.preset = ComboBox()
-        self.preset.addItems(["high (10Mbps/60fps)", "medium (6Mbps/30fps)",
-                              "low (3Mbps/30fps)", "custom"])
-        preset_map = {"high": 0, "medium": 1, "low": 2, "custom": 3}
-        self.preset.setCurrentIndex(preset_map.get(cfg.quality_preset, 1))
+        self.preset.addItems(["超高清 30Mbps/60fps", "高清 12Mbps/60fps",
+                              "标清 6Mbps/30fps", "流畅 3Mbps/30fps",
+                              "自定义"])
+        preset_map = {"ultra": 0, "high": 1, "medium": 2, "low": 3, "custom": 4}
+        self.preset.setCurrentIndex(preset_map.get(cfg.quality_preset, 2))
         root.addLayout(_row("质量预设", self.preset))
 
         # Custom bitrate
@@ -148,7 +149,7 @@ class SettingsDialog(QDialog):
             self.out_dir.setText(d)
 
     def apply_to(self, cfg: AppConfig) -> AppConfig:
-        preset_keys = ["high", "medium", "low", "custom"]
+        preset_keys = ["ultra", "high", "medium", "low", "custom"]
         cfg.quality_preset = preset_keys[self.preset.currentIndex()]
         cfg.custom_bitrate_mbps = float(self.bitrate.value())
         cfg.custom_fps = int(self.fps.value())
