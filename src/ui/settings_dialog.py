@@ -10,6 +10,7 @@ from qfluentwidgets import (
 )
 
 from ..core.config import AppConfig
+from ..core.ffmpeg_builder import detect_capabilities
 
 
 _LABEL_W = 90
@@ -86,6 +87,25 @@ class SettingsDialog(QDialog):
         self.record_audio.setChecked(cfg.record_audio)
         root.addLayout(_row("录入系统声音", self.record_audio, stretch_first=False))
 
+        # Performance toggles + capability info
+        caps = detect_capabilities()
+        self.use_hw = SwitchButton()
+        self.use_hw.setOnText("开"); self.use_hw.setOffText("关")
+        self.use_hw.setChecked(cfg.use_hw_encoder)
+        hw_name = {"h264_nvenc": "NVIDIA NVENC", "h264_qsv": "Intel QSV",
+                   "h264_amf": "AMD AMF"}.get(caps.hw_encoder, "未检测到（用CPU软编码）")
+        root.addLayout(_row(f"硬件编码 ({hw_name})", self.use_hw, stretch_first=False))
+        if not caps.hw_encoder:
+            self.use_hw.setEnabled(False)
+
+        self.use_dxgi = SwitchButton()
+        self.use_dxgi.setOnText("开"); self.use_dxgi.setOffText("关")
+        self.use_dxgi.setChecked(cfg.use_dxgi_capture)
+        dxgi_name = "可用（推荐，适合DX游戏）" if caps.has_ddagrab else "不可用（用GDI抓屏）"
+        root.addLayout(_row(f"DXGI抓屏 ({dxgi_name})", self.use_dxgi, stretch_first=False))
+        if not caps.has_ddagrab:
+            self.use_dxgi.setEnabled(False)
+
         # Output dir
         out_row = QHBoxLayout()
         out_row.setSpacing(10)
@@ -134,6 +154,8 @@ class SettingsDialog(QDialog):
         cfg.custom_fps = int(self.fps.value())
         cfg.draw_mouse = self.draw_mouse.isChecked()
         cfg.record_audio = self.record_audio.isChecked()
+        cfg.use_hw_encoder = self.use_hw.isChecked()
+        cfg.use_dxgi_capture = self.use_dxgi.isChecked()
         d = self.out_dir.text().strip()
         if d:
             Path(d).mkdir(parents=True, exist_ok=True)

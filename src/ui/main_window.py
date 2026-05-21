@@ -86,8 +86,9 @@ class MainWindow(QMainWindow):
         self._elapsed_timer.setInterval(1000)
         self._elapsed_timer.timeout.connect(self._tick_elapsed)
 
-        # Probe audio device in background so first record isn't laggy
-        threading.Thread(target=fb.pick_audio_device, daemon=True).start()
+        # Probe capabilities (HW encoder + DXGI + audio) in background — first
+        # record won't be laggy and we have the result cached for settings UI.
+        threading.Thread(target=fb.detect_capabilities, daemon=True).start()
 
         # Re-enumerate screens if user plugs/unplugs a monitor
         gapp = QGuiApplication.instance()
@@ -169,7 +170,7 @@ class MainWindow(QMainWindow):
         # Note: QFluentWidgets ComboBox.addItem doesn't reliably store userData,
         # so we maintain parallel value lists indexed by combo position.
         self._mode_values = ["fullscreen", "window", "custom"]
-        self._preset_values = ["high", "medium", "low", "custom"]
+        self._preset_values = ["ultra", "high", "medium", "low", "custom"]
         row = QHBoxLayout()
         row.setSpacing(8)
         mode_lbl = BodyLabel("模式")
@@ -189,11 +190,11 @@ class MainWindow(QMainWindow):
         q_lbl.setFixedWidth(36)
         row.addWidget(q_lbl)
         self.preset_combo = ComboBox()
-        self.preset_combo.addItems(["高 10M/60", "中 6M/30", "低 3M/30", "自定义"])
+        self.preset_combo.addItems(["超高清 30M/60", "高 12M/60", "中 6M/30", "低 3M/30", "自定义"])
         try:
             self.preset_combo.setCurrentIndex(self._preset_values.index(self.cfg.quality_preset))
         except ValueError:
-            self.preset_combo.setCurrentIndex(1)
+            self.preset_combo.setCurrentIndex(2)
         self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
         row.addWidget(self.preset_combo, 1)
         card_lay.addLayout(row)
@@ -449,8 +450,12 @@ class MainWindow(QMainWindow):
         ) or self.cfg.region_mode == "window"
         if overlay_visible:
             self.overlay.set_recording(True)
+        # Pass screens info so ddagrab can pick the right monitor index
+        screens = [(s.geometry().x(), s.geometry().y(),
+                    s.geometry().width(), s.geometry().height())
+                   for s in QGuiApplication.screens()]
         try:
-            self.recorder.start(self.cfg, region)
+            self.recorder.start(self.cfg, region, screens=screens)
         except Exception as e:
             self._on_error(f"启动失败：{e}")
             if overlay_visible:

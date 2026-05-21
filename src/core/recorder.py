@@ -58,7 +58,8 @@ class Recorder:
         except Exception:
             pass
 
-    def start(self, cfg: AppConfig, region: fb.CaptureRegion) -> Path:
+    def start(self, cfg: AppConfig, region: fb.CaptureRegion,
+              screens: list[tuple[int, int, int, int]] | None = None) -> Path:
         if self._state is not RecorderState.IDLE:
             raise RuntimeError("Recorder already active")
 
@@ -68,7 +69,8 @@ class Recorder:
         ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         output = out_dir / f"record_{ts}.mp4"
 
-        audio_device = fb.pick_audio_device() if cfg.record_audio else None
+        caps = fb.detect_capabilities()
+        audio_device = caps.audio_device if cfg.record_audio else None
 
         cmd = fb.build_command(
             region=region,
@@ -77,6 +79,10 @@ class Recorder:
             draw_mouse=cfg.draw_mouse,
             output_path=output,
             audio_device=audio_device,
+            capabilities=caps,
+            screens=tuple(screens or ()),
+            use_hw_encoder=cfg.use_hw_encoder,
+            use_dxgi_capture=cfg.use_dxgi_capture,
         )
 
         creationflags = 0x08000000  # CREATE_NO_WINDOW

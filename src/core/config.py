@@ -12,22 +12,26 @@ CONFIG_FILE = config_dir() / "config.json"
 
 @dataclass
 class AppConfig:
-    quality_preset: str = "medium"          # high | medium | low | custom
+    quality_preset: str = "medium"          # ultra | high | medium | low | custom
     custom_bitrate_mbps: float = 6.0
     custom_fps: int = 30
     draw_mouse: bool = True
     record_audio: bool = True
     output_dir: str = field(default_factory=lambda: str(default_output_dir()))
     region_mode: str = "fullscreen"         # fullscreen | window | custom
-    last_region: Optional[list] = None      # [x, y, w, h]
+    last_region: Optional[list] = None
     hotkey_toggle: str = "f9"
     hotkey_pause: str = "f10"
     theme: str = "default"
+    # Performance / quality knobs
+    use_hw_encoder: bool = True             # NVENC/QSV/AMF auto-select; off = libx264 (CPU)
+    use_dxgi_capture: bool = True           # ddagrab when possible; off = gdigrab
 
     def preset_params(self) -> tuple[float, int]:
         """Return (bitrate_mbps, fps) for current preset."""
         table = {
-            "high": (10.0, 60),
+            "ultra": (30.0, 60),
+            "high": (12.0, 60),
             "medium": (6.0, 30),
             "low": (3.0, 30),
         }
