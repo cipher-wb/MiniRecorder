@@ -60,6 +60,10 @@ def main() -> int:
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
+    # Register bundled IBM Plex Mono so the terminal skin has its monospace face.
+    from .ui.widgets import load_mono_fonts
+    load_mono_fonts(assets_dir() / "fonts")
+
     qss = _load_theme()
     w = MainWindow(theme_qss=qss)
     w.show()

@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout, QFileDialog, QD
 from qfluentwidgets import (
     BodyLabel, StrongBodyLabel, CaptionLabel, ComboBox, DoubleSpinBox, SpinBox,
     SwitchButton, LineEdit, PushButton, ToolButton, PrimaryPushButton,
-    FluentIcon as FIF, setTheme, Theme,
+    FluentIcon as FIF, setTheme, Theme, setThemeColor,
 )
 
 from ..core.config import AppConfig
@@ -38,12 +38,18 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.cfg = cfg
         self.setWindowTitle("设置")
-        self.setMinimumSize(540, 540)
+        self.setMinimumSize(540, 580)
         self.setModal(True)
-        self.setStyleSheet("""
-            QDialog { background-color: #1c1c1c; }
-            QDialog QLabel { color: #d8d8d8; }
-        """)
+
+        # Match the main window's warm theme.
+        is_dark = cfg.theme != "light"
+        setThemeColor("#D97757")
+        setTheme(Theme.DARK if is_dark else Theme.LIGHT)
+        dlg_bg = "#221F19" if is_dark else "#F1EFE7"
+        dlg_fg = "#ECE9E0" if is_dark else "#2B2925"
+        self.setStyleSheet(
+            f"QDialog {{ background-color: {dlg_bg}; }}"
+            f"QDialog QLabel {{ color: {dlg_fg}; }}")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 18)
@@ -52,6 +58,12 @@ class SettingsDialog(QDialog):
         title = StrongBodyLabel("设置")
         title.setStyleSheet("font-size:17px;")
         root.addWidget(title)
+
+        # Theme
+        self.theme = ComboBox()
+        self.theme.addItems(["深色 暖棕", "浅色 暖奶油"])
+        self.theme.setCurrentIndex(0 if is_dark else 1)
+        root.addLayout(_row("界面主题", self.theme))
 
         # Quality preset
         self.preset = ComboBox()
@@ -161,6 +173,7 @@ class SettingsDialog(QDialog):
             self.out_dir.setText(d)
 
     def apply_to(self, cfg: AppConfig) -> AppConfig:
+        cfg.theme = "dark" if self.theme.currentIndex() == 0 else "light"
         preset_keys = ["ultra", "high", "medium", "low", "custom"]
         cfg.quality_preset = preset_keys[self.preset.currentIndex()]
         cfg.custom_bitrate_mbps = float(self.bitrate.value())

@@ -22,7 +22,7 @@ class AppConfig:
     last_region: Optional[list] = None
     hotkey_toggle: str = "f9"
     hotkey_pause: str = "f10"
-    theme: str = "default"
+    theme: str = "dark"                      # dark (暖棕) | light (暖奶油)
     # Performance / quality knobs
     use_hw_encoder: bool = True             # NVENC/QSV/AMF auto-select; off = libx264 (CPU)
     use_dxgi_capture: bool = True           # ddagrab when possible; off = gdigrab

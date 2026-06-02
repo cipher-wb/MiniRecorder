@@ -19,10 +19,11 @@ INDICATOR_THICKNESS = 8
 HANDLE_SIZE = 14
 MIN_SIZE = 80
 
-IDLE_COLOR = QColor(80, 200, 255, 235)        # cyan-blue, high contrast
-INDICATOR_COLOR = QColor(255, 200, 0, 240)    # warm amber/yellow — stands out on any wallpaper
-RECORDING_COLOR_A = QColor(255, 50, 50, 240)
-RECORDING_COLOR_B = QColor(255, 50, 50, 90)
+# Brand clay-orange (#D97757) family — matches the terminal-panel skin.
+IDLE_COLOR = QColor(0xD9, 0x77, 0x57, 240)        # edit border, idle
+INDICATOR_COLOR = QColor(0xD9, 0x77, 0x57, 235)   # fullscreen/window preview
+RECORDING_COLOR_A = QColor(0xE6, 0x5A, 0x36, 245) # recording pulse — saturated
+RECORDING_COLOR_B = QColor(0xE6, 0x5A, 0x36, 90)
 
 
 class _Handle(QWidget):
@@ -55,7 +56,7 @@ class _Handle(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        color = QColor(80, 150, 255) if self._role != "move" else QColor(120, 200, 255)
+        color = QColor(0xD9, 0x77, 0x57) if self._role != "move" else QColor(0xE2, 0x85, 0x6A)
         p.setBrush(color)
         p.setPen(QPen(QColor(255, 255, 255), 1))
         p.drawRect(self.rect().adjusted(0, 0, -1, -1))
