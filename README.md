@@ -99,8 +99,21 @@ ffmpeg/ffmpeg.exe      # 内置（不入 SVN 也行，打包脚本会嵌入）
 build.spec             # PyInstaller 配置
 ```
 
+## 录制可靠性（防「moov atom not found」）
+
+长时录制曾因「停止时 `+faststart` 整文件重写 + 超时强杀 FFmpeg」导致 MP4 缺少 moov、无法播放。当前策略：
+
+1. **录制中禁止 `+faststart`**（避免停止阶段重写数 GB 文件）。
+2. **默认「防损坏录制」**：碎片化 MP4（`frag_keyframe+empty_moov`），异常退出时文件往往仍可播；正常停止后自动 remux 成标准 MP4。
+3. **写入 `*.tmp.mp4`**，校验通过后再改名为最终文件。
+4. **停止等待时间随文件大小放宽**（约 45s + 25s/GB，上限 5 分钟），并在后台线程封装，UI 提示「正在封装，请勿关闭」。
+5. **可选「停止后优化拖动」**：仅在录制结束后做 faststart，方便进度条拖动。
+
+设置面板可开关「防损坏录制」「停止后优化拖动」。
+
 ## 已知问题 / 后续
 
 - 当前打包后单 exe 约 250–280MB（FFmpeg full build 占大头）。换 essentials 可降到 ~120MB。
-- 高分辨率 60fps 用 libx264 CPU 占用偏高；后续可接 NVENC 硬编码（仅需在 `ffmpeg_builder.py` 替换 `-c:v` 参数）。
+- 高分辨率 60fps 用 libx264 CPU 占用偏高；已支持 NVENC/QSV/AMF 自动探测。
 - 窗口模式跟随是 500ms 轮询；如果游戏窗口在录制中移动，画面坐标会滞后半秒——一般录游戏全屏化运行不会触发。
+- 暂停仍使用 `NtSuspendProcess`（挂起 FFmpeg）；极端情况下暂停中强制杀进程仍可能丢尾部数据，建议停录而不是挂起很久再杀进程。

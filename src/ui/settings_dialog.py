@@ -38,7 +38,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.cfg = cfg
         self.setWindowTitle("设置")
-        self.setMinimumSize(540, 580)
+        self.setMinimumSize(540, 680)
         self.setModal(True)
 
         # Match the main window's warm theme.
@@ -119,6 +119,29 @@ class SettingsDialog(QDialog):
         if not caps.has_ddagrab:
             self.use_dxgi.setEnabled(False)
 
+        # Crash-safe recording (fragmented MP4 → remux on stop)
+        self.crash_safe = SwitchButton()
+        self.crash_safe.setOnText("开"); self.crash_safe.setOffText("关")
+        self.crash_safe.setChecked(getattr(cfg, "crash_safe_recording", True))
+        root.addLayout(_row("防损坏录制", self.crash_safe, stretch_first=False))
+        hint_safe = CaptionLabel(
+            "推荐开启。异常退出时文件多半仍可播放；正常停止会自动转成标准 MP4。"
+        )
+        hint_safe.setStyleSheet("color:#666; padding-left:100px;")
+        hint_safe.setWordWrap(True)
+        root.addWidget(hint_safe)
+
+        self.faststart = SwitchButton()
+        self.faststart.setOnText("开"); self.faststart.setOffText("关")
+        self.faststart.setChecked(getattr(cfg, "apply_faststart_after", True))
+        root.addLayout(_row("停止后优化拖动", self.faststart, stretch_first=False))
+        hint_fs = CaptionLabel(
+            "仅在「停止录制之后」优化，方便进度条拖动。不会在录制中重写文件。"
+        )
+        hint_fs.setStyleSheet("color:#666; padding-left:100px;")
+        hint_fs.setWordWrap(True)
+        root.addWidget(hint_fs)
+
         # Filename prefix
         self.prefix = LineEdit()
         self.prefix.setText(cfg.filename_prefix)
@@ -182,6 +205,8 @@ class SettingsDialog(QDialog):
         cfg.record_audio = self.record_audio.isChecked()
         cfg.use_hw_encoder = self.use_hw.isChecked()
         cfg.use_dxgi_capture = self.use_dxgi.isChecked()
+        cfg.crash_safe_recording = self.crash_safe.isChecked()
+        cfg.apply_faststart_after = self.faststart.isChecked()
         prefix = self.prefix.text().strip()
         cfg.filename_prefix = prefix if prefix else "record"
         d = self.out_dir.text().strip()

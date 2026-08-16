@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from ..core import config as cfg_mod
 from ..core import ffmpeg_builder as fb
-from ..core.recorder import Recorder, RecorderState
+from ..core.recorder import Recorder, RecorderState, StopResult
 from ..core.ffmpeg_builder import CaptureRegion
 from ..core.hotkey import HotkeyManager
 from .region_overlay import RegionOverlay
@@ -40,6 +40,8 @@ CARD_W = 340         # visible card width (matches prototype)
 class _RecorderBridge(QObject):
     state_changed = Signal(object)
     error = Signal(str)
+    status = Signal(str)
+    stop_finished = Signal(object)  # StopResult
 
 
 class _TitleBar(QFrame):
@@ -84,10 +86,14 @@ class MainWindow(QMainWindow):
         self.bridge = _RecorderBridge()
         self.bridge.state_changed.connect(self._on_state)
         self.bridge.error.connect(self._on_error)
+        self.bridge.status.connect(self._on_status)
+        self.bridge.stop_finished.connect(self._on_stop_finished)
         self.recorder = Recorder(
             on_state_change=lambda s: self.bridge.state_changed.emit(s),
             on_error=lambda msg: self.bridge.error.emit(msg),
+            on_status=lambda msg: self.bridge.status.emit(msg),
         )
+        self._stopping = False
 
         self.overlay = RegionOverlay()
         self.overlay.region_changed.connect(self._on_region_changed)
@@ -389,8 +395,20 @@ class MainWindow(QMainWindow):
 
     def _real_quit(self):
         cfg_mod.save(self.cfg)
-        if self.recorder.state is not RecorderState.IDLE:
-            self.recorder.stop()
+        if self.recorder.state is not RecorderState.IDLE or self._stopping:
+            # Must finalize on the GUI thread path carefully: block with a
+            # modal-ish wait so moov is written before process exits.
+            self._status_toast("正在安全结束录制后退出…")
+            if not self._stopping:
+                result = self.recorder.stop()
+                self._apply_stop_result(result)
+            else:
+                # Stop already in flight — spin until idle (max ~5 min)
+                for _ in range(3000):
+                    if self.recorder.state is RecorderState.IDLE and not self._stopping:
+                        break
+                    QApplication.processEvents()
+                    threading.Event().wait(0.1)
         self.hotkeys.unregister_all()
         self.overlay.destroy()
         QApplication.instance().quit()
@@ -563,12 +581,16 @@ class MainWindow(QMainWindow):
                         duration=3000, parent=self)
 
     def toggle_record(self):
+        if self._stopping or self.recorder.state is RecorderState.FINALIZING:
+            return
         if self.recorder.state is RecorderState.IDLE:
             self.start_record()
         else:
             self.stop_record()
 
     def start_record(self):
+        if self._stopping or self.recorder.state is not RecorderState.IDLE:
+            return
         region = self._current_region()
         if region is None:
             return
@@ -593,22 +615,61 @@ class MainWindow(QMainWindow):
         cfg_mod.save(self.cfg)
 
     def stop_record(self):
-        out = self.recorder.stop()
+        """Stop on a background thread so long finalize/remux does not freeze UI."""
+        if self._stopping or self.recorder.state is RecorderState.IDLE:
+            return
+        self._stopping = True
         self._elapsed_timer.stop()
         self.overlay.set_recording(False)
-        if out and out.exists():
-            size_mb = out.stat().st_size / (1024 * 1024)
-            self.saved_label.setText(f"✓ saved   {out.name} · {size_mb:.1f} MB")
+        self.saved_label.setText("正在封装，请勿关闭…")
+        self.saved_label.setStyleSheet(f"color:{self._t.get('warn', self._t['t2'])};")
+        self._update_buttons()
+
+        def worker():
+            result = self.recorder.stop()
+            self.bridge.stop_finished.emit(result)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @Slot(object)
+    def _on_stop_finished(self, result: object):
+        self._stopping = False
+        self._apply_stop_result(result if isinstance(result, StopResult) else StopResult(ok=False, message="unknown"))
+        self._update_buttons()
+
+    def _apply_stop_result(self, result: StopResult) -> None:
+        if result.ok and result.path and result.path.exists():
+            size_mb = result.bytes_written / (1024 * 1024) if result.bytes_written else (
+                result.path.stat().st_size / (1024 * 1024)
+            )
+            self.saved_label.setText(f"✓ saved   {result.path.name} · {size_mb:.1f} MB")
             self.saved_label.setStyleSheet(f"color:{self._t['ok']};")
-            self.tray.showMessage("录制完成",
-                                  f"{out.name}  ({size_mb:.1f} MB)\n{out.parent}",
-                                  QSystemTrayIcon.Information, 5000)
-            self._last_output = out
+            self.tray.showMessage(
+                "录制完成",
+                f"{result.path.name}  ({size_mb:.1f} MB)\n{result.path.parent}",
+                QSystemTrayIcon.Information, 5000,
+            )
+            self._last_output = result.path
         else:
-            self.saved_label.setText("录制失败")
-            self.saved_label.setStyleSheet(f"color:{self._t['t3']};")
+            msg = (result.message or "录制失败").split("\n")[0]
+            self.saved_label.setText(f"✗ {msg[:48]}")
+            self.saved_label.setStyleSheet(f"color:{self._t.get('err', self._t['t3'])};")
+            if result.message:
+                self.tray.showMessage("录制异常", result.message[:200],
+                                      QSystemTrayIcon.Warning, 8000)
+
+    @Slot(str)
+    def _on_status(self, msg: str):
+        if self._stopping or self.recorder.state is RecorderState.FINALIZING:
+            self.saved_label.setText(msg[:60])
+            self.saved_label.setStyleSheet(f"color:{self._t.get('warn', self._t['t2'])};")
+
+    def _status_toast(self, msg: str) -> None:
+        self.saved_label.setText(msg[:60])
 
     def toggle_pause(self):
+        if self._stopping or self.recorder.state is RecorderState.FINALIZING:
+            return
         if self.recorder.state is RecorderState.RECORDING:
             self.recorder.pause()
         elif self.recorder.state is RecorderState.PAUSED:
@@ -631,6 +692,10 @@ class MainWindow(QMainWindow):
                 self._pulse_timer.start()
         elif state is RecorderState.PAUSED:
             word, st, dot = "paused", "paused", t["paused"]
+            self.caret.setVisible(False)
+            self._pulse_timer.stop()
+        elif state is RecorderState.FINALIZING:
+            word, st, dot = "finalizing", "paused", t.get("warn", t["paused"])
             self.caret.setVisible(False)
             self._pulse_timer.stop()
         else:
@@ -673,9 +738,11 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "record_btn"):
             return
         s = self.recorder.state
+        busy = self._stopping or s is RecorderState.FINALIZING
         recording_now = s is not RecorderState.IDLE
-        self.record_btn.set_recording(recording_now)
-        self.pause_btn.setEnabled(recording_now)
+        self.record_btn.set_recording(recording_now and not busy)
+        self.record_btn.setEnabled(not busy)
+        self.pause_btn.setEnabled(recording_now and not busy and s is not RecorderState.FINALIZING)
         self.pause_btn.set_glyph_kind("play" if s is RecorderState.PAUSED else "pause")
         self.pause_btn.set_label("继续" if s is RecorderState.PAUSED else "暂停")
         if hasattr(self, "_t"):
@@ -740,6 +807,24 @@ class MainWindow(QMainWindow):
     # ---------- Lifecycle ----------
 
     def closeEvent(self, ev):
+        """Closing the window hides to tray; never kill an in-progress finalize.
+
+        If user is recording, keep recording in background (tray) instead of
+        aborting — avoids moov-less broken MP4s from force-close mid-capture.
+        """
         cfg_mod.save(self.cfg)
         self.overlay.hide()
-        super().closeEvent(ev)
+        if self.recorder.state is not RecorderState.IDLE or self._stopping:
+            # Hide instead of quitting while capture/finalize is active
+            self.hide()
+            self.tray.showMessage(
+                "轻录仍在后台运行",
+                "录制/封装进行中，已最小化到托盘。请用托盘菜单停止或退出。",
+                QSystemTrayIcon.Information,
+                4000,
+            )
+            ev.ignore()
+            return
+        # Idle: just hide to tray (historical behaviour via close button)
+        self.hide()
+        ev.ignore()

@@ -28,6 +28,12 @@ class AppConfig:
     use_dxgi_capture: bool = True           # ddagrab when possible; off = gdigrab
     # File naming: <prefix>_<YYYYMMDD_HHMMSS>.mp4
     filename_prefix: str = "record"
+    # Reliability: crash-safe fragmented MP4 while recording (remux to progressive on stop).
+    # Prevents "moov atom not found" when process is killed mid-record.
+    crash_safe_recording: bool = True
+    # After a clean stop, remux with +faststart so browsers/players can seek immediately.
+    # Done only AFTER recording finishes (never during live capture).
+    apply_faststart_after: bool = True
 
     def preset_params(self) -> tuple[float, int]:
         """Return (bitrate_mbps, fps) for current preset."""

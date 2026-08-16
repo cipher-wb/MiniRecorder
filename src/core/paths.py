@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 
 def _base_dir() -> Path:
@@ -29,6 +30,23 @@ def ffmpeg_path() -> Path:
     raise FileNotFoundError(
         "ffmpeg.exe not found. Expected bundled at ffmpeg/ffmpeg.exe or on PATH."
     )
+
+
+def ffprobe_path() -> Optional[Path]:
+    """Best-effort locate ffprobe next to bundled ffmpeg, or on PATH. May be None."""
+    from shutil import which
+    cand = resource("ffmpeg", "ffprobe.exe")
+    if cand.exists():
+        return cand
+    # Same folder as resolved ffmpeg
+    try:
+        sibling = ffmpeg_path().with_name("ffprobe.exe")
+        if sibling.exists():
+            return sibling
+    except FileNotFoundError:
+        pass
+    found = which("ffprobe")
+    return Path(found) if found else None
 
 
 def assets_dir() -> Path:

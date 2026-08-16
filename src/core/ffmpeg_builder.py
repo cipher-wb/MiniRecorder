@@ -159,8 +159,18 @@ def build_command(
     screens: Sequence[tuple[int, int, int, int]] = (),
     use_hw_encoder: bool = True,
     use_dxgi_capture: bool = True,
+    crash_safe: bool = True,
 ) -> list[str]:
-    """Build the ffmpeg argv. Auto-selects hw encoder + capture backend based on caps."""
+    """Build the ffmpeg argv. Auto-selects hw encoder + capture backend based on caps.
+
+    movflags notes (critical for long recordings):
+    - NEVER use +faststart while recording: it rewrites the whole file on stop and
+      can take minutes for multi-GB captures; if the app times out and kills ffmpeg,
+      the file loses its moov atom and becomes unplayable.
+    - crash_safe=True: frag_keyframe+empty_moov so mid-crash files are often still
+      playable; recorder remuxes to a normal MP4 after a clean stop.
+    - crash_safe=False: plain progressive MP4 (moov written once at graceful stop).
+    """
     caps = capabilities or detect_capabilities()
     ff = str(ffmpeg_path())
     cmd: list[str] = [ff, "-hide_banner", "-loglevel", "warning", "-y"]
@@ -228,5 +238,34 @@ def build_command(
             "-bufsize", f"{bitrate_mbps * 2}M"]
     if audio_device:
         cmd += ["-c:a", "aac", "-b:a", "160k"]
-    cmd += ["-movflags", "+faststart", str(output_path)]
+
+    # Force mp4 muxer so temp names like "*.tmp.mp4" still work.
+    # MP4 container flags — see docstring. Do not add +faststart here.
+    if crash_safe:
+        # Fragmented MP4: moov written up front; each fragment is self-describing.
+        # Survives most crashes; remux to progressive MP4 after stop for editors.
+        cmd += [
+            "-f", "mp4",
+            "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+            str(output_path),
+        ]
+    else:
+        # Progressive MP4; moov is finalized only on graceful quit ('q').
+        cmd += ["-f", "mp4", str(output_path)]
+    return cmd
+
+
+def build_remux_command(src: Path, dst: Path, faststart: bool = True) -> list[str]:
+    """Remux (stream copy) to a progressive MP4 suitable for editors/players.
+
+    Used after crash-safe fragmented recording, or to optionally apply faststart
+    once recording has fully finished (never during live capture).
+    """
+    ff = str(ffmpeg_path())
+    cmd = [ff, "-hide_banner", "-loglevel", "warning", "-y",
+           "-i", str(src), "-c", "copy"]
+    if faststart:
+        cmd += ["-movflags", "+faststart"]
+    # Explicit format so destinations like "*.mp4.tmp" still mux as mp4.
+    cmd += ["-f", "mp4", str(dst)]
     return cmd
