@@ -4,7 +4,7 @@
 
 #define AppName "轻录"
 #define AppNameEn "MiniRecorder"
-#define AppVersion "1.1.0"
+#define AppVersion "1.2.0"
 #define AppPublisher "cipher-wb"
 #define AppURL "https://github.com/cipher-wb/MiniRecorder"
 #define AppExeName "MiniRecorder.exe"

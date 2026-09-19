@@ -22,6 +22,13 @@ from PySide6.QtWidgets import (
 
 from ..core import config as cfg_mod
 from ..core import ffmpeg_builder as fb
+from ..core.display import (
+    logical_rect_to_physical,
+    logical_screen_to_physical,
+    native_geometry,
+    physical_rect_to_logical,
+    physical_screen_geometries,
+)
 from ..core.recorder import Recorder, RecorderState, StopResult
 from ..core.ffmpeg_builder import CaptureRegion
 from ..core.hotkey import HotkeyManager
@@ -431,8 +438,7 @@ class MainWindow(QMainWindow):
         self.region_row.setVisible(is_custom)
 
         if is_custom:
-            self.region_row.set_region(self._custom_rect.x(), self._custom_rect.y(),
-                                       self._custom_rect.width(), self._custom_rect.height())
+            self._sync_region_row(self._custom_rect)
             self.overlay.set_region_rect(QRect(self._custom_rect))
             self.overlay.show(style="edit")
             self.overlay.set_recording(False)
@@ -473,8 +479,9 @@ class MainWindow(QMainWindow):
         self._screen_values = []
         for i, sc in enumerate(screens):
             g = sc.geometry()
+            _, _, nw, nh = native_geometry(sc)
             tag = " · 主屏" if sc is primary else ""
-            items.append((f"屏幕{i + 1}", f"{g.width()}×{g.height()}{tag}"))
+            items.append((f"屏幕{i + 1}", f"{nw}×{nh}{tag}"))
             self._screen_values.append(QRect(g))
             if sc is primary:
                 primary_idx = i
@@ -540,13 +547,17 @@ class MainWindow(QMainWindow):
         if r is None:
             return
         x, y, w, h = r
-        self.overlay.set_region_rect(QRect(x, y, w, h))
+        self.overlay.set_region_rect(physical_rect_to_logical(x, y, w, h))
+
+    def _sync_region_row(self, r: QRect):
+        px, py, pw, ph = logical_rect_to_physical(r)
+        self.region_row.set_region(px, py, pw, ph)
 
     def _on_region_changed(self, r: QRect):
         if self.cfg.region_mode == "custom":
             self._custom_rect = QRect(r)
             self.cfg.last_region = [r.x(), r.y(), r.width(), r.height()]
-            self.region_row.set_region(r.x(), r.y(), r.width(), r.height())
+            self._sync_region_row(r)
 
     def _on_preset_changed(self, idx: int):
         if 0 <= idx < len(self._preset_values):
@@ -560,7 +571,8 @@ class MainWindow(QMainWindow):
             geom = self._selected_screen_geom
             if geom is None:
                 return CaptureRegion(fullscreen=True)
-            return CaptureRegion(geom.x(), geom.y(), geom.width(), geom.height(), fullscreen=False)
+            x, y, w, h = logical_screen_to_physical(geom)
+            return CaptureRegion(x, y, w, h, fullscreen=False)
         if mode == "window":
             if self._selected_hwnd is None:
                 self._show_warning("请先选择一个窗口")
@@ -569,10 +581,10 @@ class MainWindow(QMainWindow):
             if r is None:
                 self._show_warning("无法获取窗口位置，可能已关闭")
                 return None
-            x, y, w, h = r
+            x, y, w, h = r  # Win32 physical pixels
             return CaptureRegion(x, y, w, h, fullscreen=False)
-        r = self._custom_rect
-        return CaptureRegion(r.x(), r.y(), r.width(), r.height(), fullscreen=False)
+        x, y, w, h = logical_rect_to_physical(self._custom_rect)
+        return CaptureRegion(x, y, w, h, fullscreen=False)
 
     def _show_warning(self, content: str):
         from qfluentwidgets import InfoBar, InfoBarPosition
@@ -599,9 +611,7 @@ class MainWindow(QMainWindow):
                            self.cfg.region_mode == "window")
         if overlay_visible:
             self.overlay.set_recording(True)
-        screens = [(s.geometry().x(), s.geometry().y(),
-                    s.geometry().width(), s.geometry().height())
-                   for s in QGuiApplication.screens()]
+        screens = physical_screen_geometries()
         try:
             self.recorder.start(self.cfg, region, screens=screens)
         except Exception as e:

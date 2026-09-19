@@ -21,7 +21,11 @@ _CREATE_NO_WINDOW = 0x08000000
 
 @dataclass
 class CaptureRegion:
-    """Region in screen pixels. `fullscreen=True` = entire virtual desktop."""
+    """Region in Windows physical pixels. `fullscreen=True` = entire virtual desktop.
+
+    Callers must convert Qt logical (DIP) rectangles first; gdigrab/ddagrab
+    do not understand Qt's high-DPI coordinate space.
+    """
     x: int = 0
     y: int = 0
     w: int = 0
@@ -178,8 +182,8 @@ def build_command(
     # ---- Capture input ----
     monitor_idx = _which_monitor(region, screens) if screens else -1
     can_use_dda = (use_dxgi_capture and caps.has_ddagrab and
-                   (region.fullscreen and len(screens) == 1) or
-                   (not region.fullscreen and monitor_idx >= 0))
+                   ((region.fullscreen and len(screens) == 1) or
+                    (not region.fullscreen and monitor_idx >= 0)))
     # NOTE: ddagrab can't span multiple monitors. fullscreen=True with multiple
     # screens (= "all screens" virtual desktop) must fall back to gdigrab.
 

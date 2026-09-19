@@ -19,7 +19,7 @@ class AppConfig:
     record_audio: bool = True
     output_dir: str = field(default_factory=lambda: str(default_output_dir()))
     region_mode: str = "fullscreen"         # fullscreen | window | custom
-    last_region: Optional[list] = None
+    last_region: Optional[list] = None      # Qt logical pixels [x, y, w, h]
     hotkey_toggle: str = "f9"
     hotkey_pause: str = "f10"
     theme: str = "dark"                      # dark (暖棕) | light (暖奶油)

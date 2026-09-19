@@ -152,7 +152,7 @@ class RegionOverlay:
         self._sig = _SignalProxy()
         self.region_changed = self._sig.changed
 
-        self._rect = QRect(200, 200, 960, 540)
+        self._rect = QRect(200, 200, 960, 540)  # Qt logical (DIP) pixels
         self._strips = [_BorderStrip() for _ in range(4)]  # T B L R
         self._handles: dict[str, _Handle] = {
             r: _Handle(self, r) for r in ("tl", "t", "tr", "l", "r", "bl", "b", "br", "move")

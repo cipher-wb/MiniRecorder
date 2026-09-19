@@ -4,12 +4,17 @@ Second launch is detected via a named local socket; the running instance is
 told to bring itself to the front and the second launcher exits.
 """
 from __future__ import annotations
+import os
 import sys
 from pathlib import Path
 
+# Must be set before the first QApplication is constructed, otherwise 125%/150%
+# scale on 4K displays can be rounded and the overlay/ffmpeg pixel spaces drift.
+os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
+
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
-from PySide6.QtCore import QByteArray
+from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 from .core.paths import assets_dir
@@ -43,6 +48,9 @@ def _load_theme() -> str:
 
 
 def main() -> int:
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
     # Fast-path: if another instance is already running, wake it and exit.
     # QApplication doesn't have to exist for QLocalSocket.connectToServer.
     app_for_probe = QApplication.instance() or QApplication(sys.argv)
@@ -50,9 +58,6 @@ def main() -> int:
         return 0
     # Reuse the probe QApplication as our real one.
     app = app_for_probe
-    QApplication.setHighDpiScaleFactorRoundingPolicy(
-        __import__("PySide6.QtCore", fromlist=["Qt"]).Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
-    )
     app.setApplicationName("轻录")
     app.setQuitOnLastWindowClosed(False)  # keep tray alive
 

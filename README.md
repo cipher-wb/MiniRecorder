@@ -54,7 +54,7 @@ winget install --id JRSoftware.InnoSetup
 
 ```powershell
 & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer.iss
-# 输出：installer_dist\轻录_Setup_1.0.0.exe
+# 输出：installer_dist\轻录_Setup_1.2.0.exe
 ```
 
 `ChineseSimplified.isl` 是中文界面语言包，已附在仓库内（Inno Setup 官方不默认带）。
